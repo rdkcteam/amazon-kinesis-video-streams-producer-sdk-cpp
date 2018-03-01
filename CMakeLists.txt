@@ -272,11 +272,28 @@ include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/include/glib-2.0)
 include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/include/log4cplus)
 include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/glib-2.54.2)
 include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/lib/glib-2.0/include)
+
+include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/share/sc_config)
+include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/share/sc_config/include)
+include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/share/libsccomm/inc)
+include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/libcgicomm/inc)
+include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/librdkc)
+include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/librdkcstream)
+
+
 #include_directories(/System/Library/Frameworks/JavaVM.framework/Versions/Current/Headers)
 #include_directories(${JAVA_HOME}/include)
 #include_directories(${JAVA_HOME}/include/${CMAKE_SYSTEM_NAME_LOWER_CASE})
 
 link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/lib)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/amba/prebuild/imgproc/img_lib)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/share/libsccomm/bin)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/userland/mxml-2.6)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/libcgicomm/bin)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/librdkc/bin)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/librdkcstream/bin)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src//amba/prebuild/third-party/armv7-a-hf/alsa-lib/usr/lib)
+
 add_library(producer SHARED ${PRODUCER_SOURCE_FILES})
 #add_library(KinesisVideoProducerJNI SHARED ${PRODUCER_SOURCE_FILES_JNI})
 #add_executable(start ${TST_PRODUCER_SOURCE_FILES})
@@ -322,5 +339,14 @@ target_link_libraries(kinesis_video_rdkc_sample_app
         producer
         pthread
         dl
-        glib-2.0)
+        glib-2.0
+        img_algo_s2l
+        sccomm
+        resolv
+        rt
+        mxml
+        cgicomm
+        rdkcstream
+        asound
+        m)
 

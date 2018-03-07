@@ -28,6 +28,8 @@ LOGGER_TAG("com.amazonaws.kinesis.video.rdkcstreamer");
 #define SESSION_TOKEN_ENV_VAR "AWS_SESSION_TOKEN"
 #define DEFAULT_REGION_ENV_VAR "AWS_DEFAULT_REGION"
 
+FILE *fp = NULL;
+
 namespace com { namespace amazonaws { namespace kinesis { namespace video {
 
 class SampleClientCallbackProvider : public ClientCallbackProvider {
@@ -159,11 +161,28 @@ bool put_frame(shared_ptr<KinesisVideoStream> kinesis_video_stream, void *data, 
     return kinesis_video_stream->putFrame(frame);
 }
 
-static int on_new_sample(CustomData *data, RDKC_FrameInfo *pconfig) {
-    
+static int on_new_sample(CustomData *data, RDKC_FrameInfo *pconfig, int &dumpstream) {
+    //usleep(66000);
+
     /*printf("(%d): on_new_sample : stream_type=%d, frame_size=%d, pic_type=%d, frame_num=%d, width=%d, height=%d, timestamap=%d, arm_pts=%llu! ,dsp_pts=%llu!\n", 
         __LINE__, pconfig->stream_type, pconfig->frame_size, pconfig->pic_type, pconfig->frame_num, pconfig->width, pconfig->height, 
         pconfig->frame_timestamp, pconfig->arm_pts, pconfig->dsp_pts);*/
+    
+    if (dumpstream == 1) {
+        int write_bytes = 0;
+        int ret = 0;
+        
+        if( NULL != fp ) {
+            //  read video frame, write into file
+            write_bytes = fwrite((char *)pconfig->frame_ptr, pconfig->frame_size, 1, fp);
+            if (write_bytes <= 0)
+            {
+                printf("(%d): write video error. ret=%d, errmsg(%d)=%s!\n", __LINE__, ret, errno, strerror(errno));
+                ret = -1;
+                return ret;
+            }
+        }
+    }
 
     data->h264_stream_supported = true;
     if (!data->stream_started) {
@@ -175,19 +194,19 @@ static int on_new_sample(CustomData *data, RDKC_FrameInfo *pconfig) {
     uint8_t *frame_data = (uint8_t*) pconfig->frame_ptr;
     size_t buffer_size = (size_t) pconfig->frame_size;
 
-    //if(!delta) 
     if ( pconfig->pic_type == 1 ) {
-        // Safeguard stream and playback in case of h264 keyframes comes with different PTS and DTS
-        /*if (data->h264_stream_supported) {
-            pconfig->arm_pts = pconfig->dts;
-        }*/
         kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
     } else {
         kinesis_video_flags = FRAME_FLAG_NONE;
     }
 
-    if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, std::chrono::nanoseconds(pconfig->frame_timestamp),
-                           std::chrono::nanoseconds(pconfig->frame_timestamp), kinesis_video_flags)) {
+    std::chrono::nanoseconds frametimestamp_nano = std::chrono::milliseconds(pconfig->frame_timestamp);
+    
+    printf("Frame timestamp in milliseconds : %d\n",pconfig->frame_timestamp);
+    printf("Frame timestamp in nanoseconds : %llu\n",frametimestamp_nano);
+    
+    if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, frametimestamp_nano,
+                           frametimestamp_nano, kinesis_video_flags)) {
         g_printerr("Dropped frame!\n");
     }
     
@@ -200,74 +219,106 @@ void term_streaming(int sig)
 	term_flag = 1;
 }
 
-int rdkc_stream_init_read_frame(CustomData *data) { 
+int rdkc_stream_init_read_frame(CustomData *data, int &dumpstream) { 
     int ret = 0;
-	int stream_id = 0;
-	int video_stream_fd = 0;
+    int stream_id = 0;
+    int video_stream_fd = 0;
     StreamConfig config;
     RDKC_FrameInfo frame_info;
 
+    if( dumpstream == 1) {
+        fp = fopen("/opt/video.H264", "wo+");
+        if (NULL == fp)
+        {
+            ret = -1;
+            printf("%d:open video file error\n",__LINE__);
+            goto func_exit;
+        }
+    }
+
     // Get stream config
 	memset(&config, 0, sizeof(StreamConfig));
-	rdkc_stream_get_config(stream_id, &config);
-	printf("(%d): stream_type=%d!\n", __LINE__, config.stream_type);
-	printf("(%d): width=%d!\n", __LINE__, config.width);
-	printf("(%d): height=%d!\n", __LINE__, config.height);
-	printf("(%d): frame_rate=%d!\n", __LINE__, config.frame_rate);
-	printf("(%d): gov_length=%d!\n", __LINE__, config.gov_length);
-	printf("(%d): profile=%d!\n", __LINE__, config.profile);
-	printf("(%d): quality_type=%d!\n", __LINE__, config.quality_type);
-	printf("(%d): quality_level=%d!\n", __LINE__, config.quality_level);
-	printf("(%d): bit_rate=%d!\n", __LINE__, config.bit_rate);
+    rdkc_stream_get_config(stream_id, &config);
+    printf("(%d): stream_type=%d!\n", __LINE__, config.stream_type);
+    printf("(%d): width=%d!\n", __LINE__, config.width);
+    printf("(%d): height=%d!\n", __LINE__, config.height);
+    printf("(%d): frame_rate=%d!\n", __LINE__, config.frame_rate);
+    printf("(%d): gov_length=%d!\n", __LINE__, config.gov_length);
+    printf("(%d): profile=%d!\n", __LINE__, config.profile);
+    printf("(%d): quality_type=%d!\n", __LINE__, config.quality_type);
+    printf("(%d): quality_level=%d!\n", __LINE__, config.quality_level);
+    printf("(%d): bit_rate=%d!\n", __LINE__, config.bit_rate);
 
-	ret = rdkc_stream_set_config(stream_id, &config);
-	if (ret < 0)
-	{
-		printf("rdkc_stream_set_config error!\n");
-		ret = -1;
-		goto func_exit;
-	}
+    ret = rdkc_stream_set_config(stream_id, &config);
+    if (ret < 0)
+    {
+        printf("rdkc_stream_set_config error!\n");
+        ret = -1;
+        goto func_exit;
+    }
+        
+    rdkc_stream_get_config(stream_id, &config);
+    printf("(%d): after set : dump stream flag=%d!\n", __LINE__, dumpstream);
+    printf("(%d): after set : stream_type=%d!\n", __LINE__, config.stream_type);
+    printf("(%d): after set : width=%d!\n", __LINE__, config.width);
+    printf("(%d): after set : height=%d!\n", __LINE__, config.height);
+    printf("(%d): after set : frame_rate=%d!\n", __LINE__, config.frame_rate);
+    printf("(%d): after set : gov_length=%d!\n", __LINE__, config.gov_length);
+    printf("(%d): after set : profile=%d!\n", __LINE__, config.profile);
+    printf("(%d): after set : quality_type=%d!\n", __LINE__, config.quality_type);
+    printf("(%d): after set : quality_level=%d!\n", __LINE__, config.quality_level);
+    printf("(%d): after set : bit_rate=%d!\n", __LINE__, config.bit_rate);
 
     printf("(%d): Set stream settings sucessfully! Wait few seconds for streaming server reload.\n", __LINE__);
-	sleep(4);
+    sleep(4);
 
-	video_stream_fd = rdkc_stream_init(stream_id,1);//video
-	if (video_stream_fd < 0)
-	{
-		printf("Init rdkc stream video error!\n");
-		ret = -1;
-		goto func_exit;
-	}
+    video_stream_fd = rdkc_stream_init(stream_id,1);//video
+    if (video_stream_fd < 0)
+    {
+        printf("Init rdkc stream video error!\n");
+        ret = -1;
+        goto func_exit;
+    }
 
     while (!term_flag)
-	{
-		ret = rdkc_stream_read_frame(video_stream_fd, &frame_info);
-		if (0 == ret)
-		{
-			/*printf("(%d): rdkc_stream_init_read_frame : Got one frame! stream_type=%d, frame_size=%d, pic_type=%d, frame_num=%d, width=%d, height=%d, timestamap=%d, arm_pts=%llu, dsp_pts=%llu!\n", 
-				__LINE__, frame_info.stream_type, frame_info.frame_size, frame_info.pic_type, frame_info.frame_num, frame_info.width, frame_info.height, 
-				frame_info.frame_timestamp, frame_info.arm_pts, frame_info.dsp_pts);*/
-            on_new_sample(data,&frame_info);
-		}
-		else if (1 == ret)
-		{
-			// No frame data ready, try again
-			//printf("(%d):Video No frame data ready, try again.\n", __LINE__);
-			usleep(10000);
-			continue;
-		}
-		else
-		{
-			printf("(%d):Video Read rdkc stream error.\n", __LINE__);
-			ret = -1;
-			goto func_exit;
-		}
+    {
+        ret = rdkc_stream_read_frame(video_stream_fd, &frame_info);
+        if (0 == ret)
+        {
+            /*printf("(%d): rdkc_stream_init_read_frame : Got one frame! stream_type=%d, frame_size=%d, pic_type=%d, frame_num=%d, width=%d, height=%d, timestamap=%d, arm_pts=%llu, dsp_pts=%llu!\n", 
+                __LINE__, frame_info.stream_type, frame_info.frame_size, frame_info.pic_type, frame_info.frame_num, frame_info.width, frame_info.height, 
+                frame_info.frame_timestamp, frame_info.arm_pts, frame_info.dsp_pts);*/
+            on_new_sample(data,&frame_info,dumpstream);
+        }
+        else if (1 == ret)
+        {
+            // No frame data ready, try again
+            //printf("(%d):Video No frame data ready, try again.\n", __LINE__);
+            usleep(10000);
+            continue;
+        }
+        else
+        {
+            printf("(%d):Video Read rdkc stream error.\n", __LINE__);
+            ret = -1;
+            goto func_exit;
+        }
     }
 
 func_exit:
-	printf("(%d): Rdkc stream close.\n", __LINE__);
-	rdkc_stream_close(video_stream_fd);
-	return ret;
+    printf("(%d): Rdkc stream close.\n", __LINE__);
+    if( dumpstream == 1) {
+        if (fp)
+        {
+            fclose(fp);
+            fp = NULL;
+        }
+    }
+
+    if( NULL != video_stream_fd ) {
+        rdkc_stream_close(video_stream_fd);
+    }
+    return ret;
 }
 
 void kinesis_video_init(CustomData *data, char *stream_name) {
@@ -321,7 +372,7 @@ void kinesis_video_init(CustomData *data, char *stream_name) {
     sprintf(tag_name, "piTag");
     sprintf(tag_val, "piValue");
     auto stream_definition = make_unique<StreamDefinition>(stream_name,
-                                                           hours(2),
+                                                           hours(24),
                                                            &tags,
                                                            "",
                                                            STREAMING_TYPE_REALTIME,
@@ -336,7 +387,7 @@ void kinesis_video_init(CustomData *data, char *stream_name) {
                                                            true,//SDK will restart when error happens
                                                            true,//recalculate_metrics
                                                            0,
-                                                           30,
+                                                           15,
                                                            4 * 1024 * 1024,
                                                            seconds(120),
                                                            seconds(40),
@@ -356,7 +407,7 @@ int rdkcstreamer_init(int argc, char* argv[]) {
 
     if (argc < 2) {
         LOG_ERROR(
-                "Usage: AWS_ACCESS_KEY_ID=SAMPLEKEY AWS_SECRET_ACCESS_KEY=SAMPLESECRET ./kinesis_video_rdkc_sample_app my-stream-name -w width -h height -f framerate -b bitrateInKBPS");
+                "Usage: AWS_ACCESS_KEY_ID=SAMPLEKEY AWS_SECRET_ACCESS_KEY=SAMPLESECRET ./kinesis_video_rdkc_sample_app my-stream-name -w width -h height -f framerate -b bitrateInKBPS -d enabledumpstream<0/1>");
         return 1;
     }
 
@@ -367,9 +418,9 @@ int rdkcstreamer_init(int argc, char* argv[]) {
     memset(&data, 0, sizeof(data));
 
     /* init stream format */
-    int opt, width = 0, height = 0, framerate=30, bitrateInKBPS=512;
+    int opt, width = 0, height = 0, framerate=30, bitrateInKBPS=512, dumpstream=0;
     char *endptr;
-    while ((opt = getopt(argc, argv, "w:h:f:b:")) != -1) {
+    while ((opt = getopt(argc, argv, "w:h:f:b:d:")) != -1) {
         switch (opt) {
         case 'w':
             width = strtol(optarg, &endptr, 0);
@@ -399,6 +450,13 @@ int rdkcstreamer_init(int argc, char* argv[]) {
                 return 1;
             }
             break;
+        case 'd':
+            dumpstream = strtol(optarg, &endptr, 0);
+            if (*endptr != '\0') {
+                g_printerr("Invalid dump stream value.\n");
+                return 1;
+            }
+            break;
         default: /* '?' */
             g_printerr("Invalid arguments\n");
             return 1;
@@ -415,7 +473,7 @@ int rdkcstreamer_init(int argc, char* argv[]) {
         return 1;
     }
 
-    rdkc_stream_init_read_frame(&data);
+    rdkc_stream_init_read_frame(&data,dumpstream);
     return 0;
 }
 

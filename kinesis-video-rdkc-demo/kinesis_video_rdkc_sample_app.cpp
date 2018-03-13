@@ -202,9 +202,15 @@ static int on_new_sample(CustomData *data, RDKC_FrameInfo *pconfig, int &dumpstr
 
     std::chrono::nanoseconds frametimestamp_nano = std::chrono::milliseconds(pconfig->frame_timestamp);
     
-    printf("Frame timestamp in milliseconds : %d\n",pconfig->frame_timestamp);
-    printf("Frame timestamp in nanoseconds : %llu\n",frametimestamp_nano);
-    
+    //printf("Frame timestamp in milliseconds : %d\n",pconfig->frame_timestamp);
+    //printf("Frame timestamp in nanoseconds : %llu\n",frametimestamp_nano);
+    printf("frame_data size : %d\n",buffer_size);
+    printf("\n------------frame_data Data Start------------\n");
+    for ( int i=0 ; i < 10 ; i++ ) {
+        printf("%02x\t",frame_data[i]);
+    }
+    printf("\n------------frame_data Data End------------\n");
+
     if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, frametimestamp_nano,
                            frametimestamp_nano, kinesis_video_flags)) {
         g_printerr("Dropped frame!\n");
@@ -386,7 +392,7 @@ void kinesis_video_init(CustomData *data, char *stream_name) {
                                                            true,//Ack on fragment is enabled
                                                            true,//SDK will restart when error happens
                                                            true,//recalculate_metrics
-                                                           0,
+                                                           NAL_ADAPTATION_ANNEXB_NALS,
                                                            15,
                                                            4 * 1024 * 1024,
                                                            seconds(120),

@@ -288,11 +288,8 @@ include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/librdkc
 link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/lib)
 link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/amba/prebuild/imgproc/img_lib)
 link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/share/libsccomm/bin)
-link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/userland/mxml-2.6)
-link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/libcgicomm/bin)
-link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/librdkc/bin)
-link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sysapps/apps/cgi/librdkcstream/bin)
-link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src//amba/prebuild/third-party/armv7-a-hf/alsa-lib/usr/lib)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/vendor/img/fs/shadow_root/usr/lib)
+link_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/../sdk/fsroot/src/amba/prebuild/third-party/armv7-a-hf/alsa-lib/usr/lib)
 
 add_library(producer SHARED ${PRODUCER_SOURCE_FILES})
 #add_library(KinesisVideoProducerJNI SHARED ${PRODUCER_SOURCE_FILES_JNI})

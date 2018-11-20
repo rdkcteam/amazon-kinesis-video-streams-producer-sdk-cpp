@@ -1,22 +1,24 @@
-#include "gtest/gtest.h"
-#include <com/amazonaws/kinesis/video/utils/Include.h>
+#include "UtilTestFixture.h"
 
-TEST(NegativeInvalidInput, SingleListCreate)
+class SingleListFunctionalityTest : public UtilTestBase {
+};
+
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListCreate)
 {
     EXPECT_NE(STATUS_SUCCESS, singleListCreate(NULL));
 }
 
-TEST(PositiveIdempotentInvalidInput, SingleListFree)
+TEST_F(SingleListFunctionalityTest, PositiveIdempotentInvalidInput_SingleListFree)
 {
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(NULL));
 }
 
-TEST(NegativeInvalidInput, SingleListClear)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListClear)
 {
     EXPECT_NE(STATUS_SUCCESS, singleListClear(NULL));
 }
 
-TEST(NegativeInvalidInput, SingleListInsertNodeHeadTail)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListInsertNodeHeadTail)
 {
     SingleListNode node;
     MEMSET(&node, 0x00, SIZEOF(SingleListNode));
@@ -34,7 +36,7 @@ TEST(NegativeInvalidInput, SingleListInsertNodeHeadTail)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(NegativeInvalidInput, SingleListInsertNodeAfter)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListInsertNodeAfter)
 {
     SingleListNode node1, node2;
     MEMSET(&node1, 0x00, SIZEOF(SingleListNode));
@@ -52,7 +54,7 @@ TEST(NegativeInvalidInput, SingleListInsertNodeAfter)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(NegativeInvalidInput, SingleListInsertItemHeadTailAfter)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListInsertItemHeadTailAfter)
 {
     SingleListNode node;
     MEMSET(&node, 0x00, SIZEOF(SingleListNode));
@@ -72,12 +74,12 @@ TEST(NegativeInvalidInput, SingleListInsertItemHeadTailAfter)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(PositiveIdempotentInvalidInput, SingleListDeleteHead)
+TEST_F(SingleListFunctionalityTest, PositiveIdempotentInvalidInput_SingleListDeleteHead)
 {
     EXPECT_NE(STATUS_SUCCESS, singleListDeleteHead(NULL));
 }
 
-TEST(NegativeInvalidInput, SingleListDeleteNextNode)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListDeleteNextNode)
 {
     SingleListNode node;
     MEMSET(&node, 0x00, SIZEOF(SingleListNode));
@@ -93,7 +95,23 @@ TEST(NegativeInvalidInput, SingleListDeleteNextNode)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(NegativeInvalidInput, SingleListGetHeadTailNode)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListDeleteNode)
+{
+    SingleListNode node;
+    MEMSET(&node, 0x00, SIZEOF(SingleListNode));
+    PSingleList pList;
+
+    // Create the list
+    EXPECT_EQ(STATUS_SUCCESS, singleListCreate(&pList));
+
+    EXPECT_NE(STATUS_SUCCESS, singleListDeleteNode(NULL, &node));
+    EXPECT_NE(STATUS_SUCCESS, singleListDeleteNode(pList, NULL));
+
+    // Destroy the list
+    EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
+}
+
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListGetHeadTailNode)
 {
     PSingleListNode pNode;
     PSingleList pList;
@@ -111,7 +129,7 @@ TEST(NegativeInvalidInput, SingleListGetHeadTailNode)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(NegativeInvalidInput, SingleListGetNodeAt)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListGetNodeAt)
 {
     PSingleListNode pNode;
     PSingleList pList;
@@ -131,7 +149,7 @@ TEST(NegativeInvalidInput, SingleListGetNodeAt)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(NegativeInvalidInput, SingleListGetNodeDataAt)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListGetNodeDataAt)
 {
     UINT64 data;
     PSingleList pList;
@@ -151,7 +169,7 @@ TEST(NegativeInvalidInput, SingleListGetNodeDataAt)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(NegativeInvalidInput, SingleListGetNodeData)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListGetNodeData)
 {
     PSingleListNode pNode = (PSingleListNode) 1;
     UINT64 data;
@@ -160,7 +178,7 @@ TEST(NegativeInvalidInput, SingleListGetNodeData)
     EXPECT_NE(STATUS_SUCCESS, singleListGetNodeData(pNode, NULL));
 }
 
-TEST(NegativeInvalidInput, SingleListGetNodeNext)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListGetNodeNext)
 {
     PSingleListNode pNode = (PSingleListNode) 1;
 
@@ -168,7 +186,7 @@ TEST(NegativeInvalidInput, SingleListGetNodeNext)
     EXPECT_NE(STATUS_SUCCESS, singleListGetNextNode(pNode, NULL));
 }
 
-TEST(NegativeInvalidInput, SingleListGetNodeCount)
+TEST_F(SingleListFunctionalityTest, NegativeInvalidInput_SingleListGetNodeCount)
 {
     PSingleList pList = (PSingleList) 1;
     UINT32 count;
@@ -177,7 +195,7 @@ TEST(NegativeInvalidInput, SingleListGetNodeCount)
     EXPECT_NE(STATUS_SUCCESS, singleListGetNodeCount(pList, NULL));
 }
 
-TEST(FunctionalTest, SingleListClear)
+TEST_F(SingleListFunctionalityTest, SingleListClear)
 {
     PSingleList pList;
     UINT64 count = 10;
@@ -206,7 +224,7 @@ TEST(FunctionalTest, SingleListClear)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(FunctionalTest, SingleListBasicOperationsCreateInsertGetDelete)
+TEST_F(SingleListFunctionalityTest, SingleListBasicOperationsCreateInsertGetDelete)
 {
     PSingleList pList;
     PSingleListNode pInsertNode;
@@ -225,9 +243,9 @@ TEST(FunctionalTest, SingleListBasicOperationsCreateInsertGetDelete)
 
     // Validate
     for (UINT64 i = 0; i < count; i++) {
-        EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeDataAt(pList, i, &data));
+        EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeDataAt(pList, (UINT32) i, &data));
         EXPECT_EQ(data, count - i - 1);
-        EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeAt(pList, i, &pNode));
+        EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeAt(pList, (UINT32)i, &pNode));
         EXPECT_EQ(pNode->data, count - i - 1);
     }
 
@@ -253,9 +271,9 @@ TEST(FunctionalTest, SingleListBasicOperationsCreateInsertGetDelete)
 
     // Validate
     for (UINT64 i = 0; i < count; i++) {
-        EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeDataAt(pList, i, &data));
+        EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeDataAt(pList, (UINT32) i, &data));
         EXPECT_EQ(data, i);
-        EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeAt(pList, i, &pNode));
+        EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeAt(pList, (UINT32) i, &pNode));
         EXPECT_EQ(pNode->data, i);
     }
 
@@ -317,7 +335,7 @@ TEST(FunctionalTest, SingleListBasicOperationsCreateInsertGetDelete)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(FunctionalTest, SingleListDeleteNode)
+TEST_F(SingleListFunctionalityTest, SingleListDeleteNextNode)
 {
     PSingleList pList;
     PSingleListNode pNode, pHead, pTail;
@@ -379,7 +397,77 @@ TEST(FunctionalTest, SingleListDeleteNode)
     EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
 }
 
-TEST(FunctionalTest, SingleListInsertAfter)
+TEST_F(SingleListFunctionalityTest, SingleListDeleteNode)
+{
+    PSingleList pList;
+    PSingleListNode pNode, pHead, pTail;
+    UINT64 count = 100;
+    UINT32 retCount;
+
+    // Create the list
+    EXPECT_EQ(STATUS_SUCCESS, singleListCreate(&pList));
+
+    // Delete the head/tail of an empty list - should work OK
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteHead(pList));
+
+    // Insert at the tail
+    for (UINT64 i = 0; i < count; i++) {
+        EXPECT_EQ(STATUS_SUCCESS, singleListInsertItemTail(pList, i));
+    }
+
+    // Delete the first, second as head, then second after head, one before last and last
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetHeadNode(pList, &pHead));
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteNode(pList, pHead));
+
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetHeadNode(pList, &pHead));
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteNode(pList, pHead));
+
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetHeadNode(pList, &pHead));
+    pNode = pHead->pNext;
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteNode(pList, pNode));
+
+    // Get the 3rd last and delete it
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeCount(pList, &retCount));
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeAt(pList, retCount - 3, &pNode));
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteNode(pList, pNode));
+
+    // Get the 2nd last and delete it
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeCount(pList, &retCount));
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeAt(pList, retCount - 2, &pNode));
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteNode(pList, pNode));
+
+    // Get the last and delete it
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeCount(pList, &retCount));
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeAt(pList, retCount - 1, &pNode));
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteNode(pList, pNode));
+
+    // Get the tail and delete it
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetTailNode(pList, &pTail));
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteNode(pList, pTail));
+
+    // Remove all the remaining nodes
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeCount(pList, &retCount));
+
+    // Remove the nodes
+    for (UINT64 i = 0; i < retCount; i++) {
+        EXPECT_EQ(STATUS_SUCCESS, singleListDeleteHead(pList));
+    }
+
+    // Add a single node and remove head
+    EXPECT_EQ(STATUS_SUCCESS, singleListInsertItemHead(pList, 1));
+    EXPECT_EQ(STATUS_SUCCESS, singleListDeleteHead(pList));
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetNodeCount(pList, &retCount));
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetHeadNode(pList, &pHead));
+    EXPECT_EQ(STATUS_SUCCESS, singleListGetTailNode(pList, &pTail));
+    EXPECT_EQ(retCount, 0);
+    EXPECT_EQ(pHead, pTail);
+    EXPECT_TRUE(pHead == NULL);
+
+    // Destroy the list
+    EXPECT_EQ(STATUS_SUCCESS, singleListFree(pList));
+}
+
+TEST_F(SingleListFunctionalityTest, SingleListInsertAfter)
 {
     PSingleList pList;
     PSingleListNode pHead, pTail;

@@ -38,7 +38,7 @@ STATUS parseFragmentAck(PKinesisVideoStream pKinesisVideoStream, UPLOAD_HANDLE u
 
     // If ack segment is specified and ack segment size is 0 then we should get the C-string size
     if (0 == ackSegmentSize) {
-        ackSegmentSize = STRNLEN(ackSegment, MAX_ACK_FRAGMENT_LEN);
+        ackSegmentSize = (UINT32) STRNLEN(ackSegment, MAX_ACK_FRAGMENT_LEN);
     } else {
         CHK(ackSegmentSize <= MAX_ACK_FRAGMENT_LEN, STATUS_INVALID_ACK_SEGMENT_LEN);
     }
@@ -410,6 +410,7 @@ SERVICE_CALL_RESULT getAckErrorTypeFromErrorId(UINT64 errorId) {
         case SERVICE_CALL_RESULT_INVALID_MKV_DATA:
         case SERVICE_CALL_RESULT_INVALID_PRODUCER_TIMESTAMP:
         case SERVICE_CALL_RESULT_STREAM_NOT_ACTIVE:
+        case SERVICE_CALL_RESULT_FRAGMENT_METADATA_LIMIT_REACHED:
         case SERVICE_CALL_RESULT_KMS_KEY_ACCESS_DENIED:
         case SERVICE_CALL_RESULT_KMS_KEY_DISABLED:
         case SERVICE_CALL_RESULT_KMS_KEY_VALIDATION_ERROR:

@@ -29,6 +29,17 @@ UINT32 ClientTestBase::getRandomNumberFunc(UINT64 customData)
     return RAND();
 }
 
+VOID ClientTestBase::logPrintFunc(UINT32 level, PCHAR tag, PCHAR fmt, ...)
+{
+    // Temp scratch buffer = 10KB
+    CHAR tempBuf[10 * 1024];
+    snprintf(tempBuf, SIZEOF(tempBuf), "\n[0x%016llx] [level %u] %s %s", GETTID(), level, tag, fmt);
+    va_list valist;
+    va_start(valist, fmt);
+    vprintf(tempBuf, valist);
+    va_end(valist);
+}
+
 STATUS ClientTestBase::getDeviceCertificateFunc(UINT64 customData, PBYTE* ppCert, PUINT32 pSize, PUINT64 pExpiration)
 {
     DLOGV("TID 0x%016llx getDeviceCertificateFunc called.", GETTID());
@@ -70,7 +81,7 @@ STATUS ClientTestBase::getDeviceFingerprintFunc(UINT64 customData, PCHAR* ppFing
 
     pClient->mGetDeviceFingerprintFuncCount++;
 
-    *ppFingerprint = TEST_DEVICE_FINGERPRINT;
+    *ppFingerprint = (PCHAR) TEST_DEVICE_FINGERPRINT;
 
     return STATUS_SUCCESS;
 }
@@ -352,7 +363,7 @@ VOID ClientTestBase::unlockMutexFunc(UINT64 customData, MUTEX mutex)
     return MUTEX_UNLOCK(mutex);
 }
 
-VOID ClientTestBase::tryLockMutexFunc(UINT64 customData, MUTEX mutex)
+BOOL ClientTestBase::tryLockMutexFunc(UINT64 customData, MUTEX mutex)
 {
     DLOGV("TID 0x%016llx tryLockMutexFunc called.", GETTID());
 
@@ -628,4 +639,7 @@ STATUS ClientTestBase::deviceCertToTokenFunc(UINT64 customData,
 //
 // Global memory allocation counter
 //
-UINT64 gTotalMemoryUsage = 0;
+UINT64 gTotalClientMemoryUsage = 0;
+
+// Global memory counter lock
+MUTEX gClientMemMutex;

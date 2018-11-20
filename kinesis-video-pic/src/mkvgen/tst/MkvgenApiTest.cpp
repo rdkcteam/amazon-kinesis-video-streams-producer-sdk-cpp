@@ -135,3 +135,106 @@ TEST_F(MkvgenApiTest, mkvgenResetGenerator_NegativeTest)
 {
     EXPECT_TRUE(STATUS_FAILED(mkvgenResetGenerator(NULL)));
 }
+
+TEST_F(MkvgenApiTest, mkvgenGenerateHeader_PositiveAndNegativeTest)
+{
+    BYTE testBuf[1000];
+    UINT32 size, storedSize;
+    UINT64 timestamp;
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(NULL, testBuf, &size, &timestamp));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, NULL, &timestamp));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, NULL, NULL, &timestamp));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(NULL, NULL, NULL, &timestamp));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(NULL, NULL, NULL, NULL));
+
+    size = 0;
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, NULL, &size, &timestamp));
+    size = 0;
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, NULL, &size, NULL));
+
+    storedSize = size;
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, &size, &timestamp));
+    EXPECT_EQ(storedSize, size);
+
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, &size, NULL));
+    EXPECT_EQ(storedSize, size);
+
+    size = storedSize + 1;
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, &size, &timestamp));
+    EXPECT_EQ(storedSize, size);
+
+    size = storedSize + 1;
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, &size, NULL));
+    EXPECT_EQ(storedSize, size);
+
+    size = storedSize - 1;
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, &size, &timestamp));
+
+    size = storedSize - 1;
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, &size, NULL));
+
+    size = 0;
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, &size, NULL));
+
+    size = 0;
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateHeader(mMkvGenerator, testBuf, &size, &timestamp));
+}
+
+TEST_F(MkvgenApiTest, mkvgenGetMkvOverheadSize_PositiveAndNegativeTest)
+{
+    UINT32 size;
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGetMkvOverheadSize(NULL, MKV_STATE_START_BLOCK, &size));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGetMkvOverheadSize(mMkvGenerator, MKV_STATE_START_BLOCK, NULL));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGetMkvOverheadSize(NULL, MKV_STATE_START_BLOCK, NULL));
+
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGetMkvOverheadSize(mMkvGenerator, MKV_STATE_START_STREAM, &size));
+    EXPECT_GE(MKV_HEADER_OVERHEAD, size);
+
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGetMkvOverheadSize(mMkvGenerator, MKV_STATE_START_CLUSTER, &size));
+    EXPECT_EQ(MKV_CLUSTER_OVERHEAD, size);
+
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGetMkvOverheadSize(mMkvGenerator, MKV_STATE_START_BLOCK, &size));
+    EXPECT_EQ(MKV_SIMPLE_BLOCK_OVERHEAD, size);
+}
+
+TEST_F(MkvgenApiTest, mkvgenGenerateTag_PositiveAndNegativeTest)
+{
+    PBYTE tempBuffer = NULL;
+    UINT32 size = 100000;
+    CHAR tagName[MKV_MAX_TAG_NAME_LEN + 2];
+    CHAR tagValue[MKV_MAX_TAG_VALUE_LEN + 2];
+    STRCPY(tagName, "TestTagName");
+    STRCPY(tagValue, "TestTagValue");
+    tempBuffer = (PBYTE) MEMALLOC(size);
+
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(NULL, tempBuffer, tagName, tagValue, &size));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(mMkvGenerator, tempBuffer, NULL, tagValue, &size));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(mMkvGenerator, tempBuffer, tagName, NULL, &size));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(mMkvGenerator, tempBuffer, tagName, tagValue, NULL));
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(NULL, tempBuffer, NULL, NULL, NULL));
+
+    // Check for a smaller size returned
+    EXPECT_EQ(STATUS_SUCCESS, mkvgenGenerateTag(mMkvGenerator, NULL, tagName, tagValue, &size));
+    size--;
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(mMkvGenerator, tempBuffer, tagName, tagValue, &size));
+
+    // Larger tagName
+    MEMSET(tagName, 'A', SIZEOF(tagName));
+    tagName[MKV_MAX_TAG_NAME_LEN + 1] = '\0';
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(mMkvGenerator, tempBuffer, tagName, tagValue, &size));
+
+    // Larger tagValue
+    STRCPY(tagName, "TestTagName");
+    MEMSET(tagValue, 'B', SIZEOF(tagValue));
+    tagValue[MKV_MAX_TAG_VALUE_LEN + 1] = '\0';
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(mMkvGenerator, tempBuffer, tagName, tagValue, &size));
+
+    // Both are larger
+    MEMSET(tagName, 'A', SIZEOF(tagName));
+    tagName[MKV_MAX_TAG_NAME_LEN + 1] = '\0';
+    MEMSET(tagValue, 'B', SIZEOF(tagValue));
+    tagValue[MKV_MAX_TAG_VALUE_LEN + 1] = '\0';
+    EXPECT_NE(STATUS_SUCCESS, mkvgenGenerateTag(mMkvGenerator, tempBuffer, tagName, tagValue, &size));
+
+    MEMFREE(tempBuffer);
+}

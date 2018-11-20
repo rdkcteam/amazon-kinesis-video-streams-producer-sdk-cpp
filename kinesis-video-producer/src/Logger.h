@@ -8,6 +8,8 @@
 #include <sstream>
 #include <stdexcept>
 
+namespace com { namespace amazonaws { namespace kinesis { namespace video {
+
 // configure the logger by loading configuration from specific properties file.
 // generally, it should be called only once in your main() function.
 #define LOG_CONFIGURE(filename) \
@@ -19,7 +21,7 @@
 
 #define _LOG_CONFIGURE_CONSOLE(level, logToStdErr) \
     log4cplus::helpers::SharedObjectPtr<log4cplus::Appender> _appender(new log4cplus::ConsoleAppender()); \
-    std::auto_ptr<log4cplus::Layout> _layout(new log4cplus::PatternLayout("%D [%t] ")/*new log4cplus::TTCCLayout()*/); \
+    std::auto_ptr<log4cplus::Layout> _layout(new log4cplus::PatternLayout("%D [%t] ")); \
     _appender->setLayout(_layout); \
     log4cplus::BasicConfigurator::doConfigure(log4cplus::Logger::getDefaultHierarchy(), logToStdErr); \
     log4cplus::Logger::getRoot().addAppender(_appender); \
@@ -75,3 +77,8 @@
       return s_logger; \
     } \
   };
+
+} // namespace video
+} // namespace kinesis
+} // namespace amazonaws
+} // namespace com

@@ -28,10 +28,35 @@ LOGGER_TAG("com.amazonaws.kinesis.video.gstreamer");
 #define SESSION_TOKEN_ENV_VAR "AWS_SESSION_TOKEN"
 #define DEFAULT_REGION_ENV_VAR "AWS_DEFAULT_REGION"
 
+#define DEFAULT_RETENTION_PERIOD_HOURS 2
+#define DEFAULT_KMS_KEY_ID ""
+#define DEFAULT_STREAMING_TYPE STREAMING_TYPE_REALTIME
+#define DEFAULT_CONTENT_TYPE "video/h264"
+#define DEFAULT_MAX_LATENCY_SECONDS 60
+#define DEFAULT_FRAGMENT_DURATION_MILLISECONDS 2000
+#define DEFAULT_TIMECODE_SCALE_MILLISECONDS 1
+#define DEFAULT_KEY_FRAME_FRAGMENTATION TRUE
+#define DEFAULT_FRAME_TIMECODES TRUE
+#define DEFAULT_ABSOLUTE_FRAGMENT_TIMES TRUE
+#define DEFAULT_FRAGMENT_ACKS TRUE
+#define DEFAULT_RESTART_ON_ERROR TRUE
+#define DEFAULT_RECALCULATE_METRICS TRUE
+#define DEFAULT_STREAM_FRAMERATE 25
+#define DEFAULT_AVG_BANDWIDTH_BPS (4 * 1024 * 1024)
+#define DEFAULT_BUFFER_DURATION_SECONDS 180
+#define DEFAULT_REPLAY_DURATION_SECONDS 40
+#define DEFAULT_CONNECTION_STALENESS_SECONDS 60
+#define DEFAULT_CODEC_ID "V_MPEG4/ISO/AVC"
+#define DEFAULT_TRACKNAME "kinesis_video"
+
 namespace com { namespace amazonaws { namespace kinesis { namespace video {
 
 class SampleClientCallbackProvider : public ClientCallbackProvider {
 public:
+
+    UINT64 getCallbackCustomData() override {
+        return reinterpret_cast<UINT64> (this);
+    }
 
     StorageOverflowPressureFunc getStorageOverflowPressureCallback() override {
         return storageOverflowPressure;
@@ -42,6 +67,10 @@ public:
 
 class SampleStreamCallbackProvider : public StreamCallbackProvider {
 public:
+
+    UINT64 getCallbackCustomData() override {
+        return reinterpret_cast<UINT64> (this);
+    }
 
     StreamConnectionStaleFunc getStreamConnectionStaleCallback() override {
         return streamConnectionStaleHandler;
@@ -174,47 +203,65 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
     }
 
     GstBuffer *buffer = gst_sample_get_buffer(sample);
-    size_t buffer_size = gst_buffer_get_size(buffer);
-    uint8_t *frame_data = new uint8_t[buffer_size];
-    gst_buffer_extract(buffer, 0, frame_data, buffer_size);
+    bool isDroppable =  GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_CORRUPTED) ||
+                        GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DECODE_ONLY);
+    if (!isDroppable) {
+        bool isHeader = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_HEADER);
+        // drop if buffer contains header only and has invalid timestamp
+        if (!(isHeader && (!GST_BUFFER_PTS_IS_VALID(buffer) || !GST_BUFFER_DTS_IS_VALID(buffer)))) {
+            size_t buffer_size = gst_buffer_get_size(buffer);
+            uint8_t *frame_data = new uint8_t[buffer_size];
+            gst_buffer_extract(buffer, 0, frame_data, buffer_size);
 
-    bool delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
-    FRAME_FLAGS kinesis_video_flags;
-    if(!delta) {
-        // Safeguard stream and playback in case of h264 keyframes comes with different PTS and DTS
-        if (data->h264_stream_supported) {
-            buffer->pts = buffer->dts;
+            bool delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+            FRAME_FLAGS kinesis_video_flags;
+            if(!delta) {
+                // Safeguard stream and playback in case of h264 keyframes comes with different PTS and DTS
+                if (data->h264_stream_supported) {
+                    buffer->pts = buffer->dts;
+                }
+                kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
+            } else {
+                kinesis_video_flags = FRAME_FLAG_NONE;
+            }
+
+            if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, std::chrono::nanoseconds(buffer->pts),
+                                   std::chrono::nanoseconds(buffer->dts), kinesis_video_flags)) {
+                g_printerr("Dropped frame!\n");
+            }
+
+            delete[] frame_data;
         }
-        kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
-    } else {
-        kinesis_video_flags = FRAME_FLAG_NONE;
     }
 
-    if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, std::chrono::nanoseconds(buffer->pts),
-                           std::chrono::nanoseconds(buffer->dts), kinesis_video_flags)) {
-        g_printerr("Dropped frame!\n");
-    }
-
-    delete[] frame_data;
     gst_sample_unref(sample);
-
     return GST_FLOW_OK;
 }
 
-static bool format_supported_by_source(GstCaps *src_caps, bool h264_stream, int width, int height, int framerate) {
-    GstCaps *query_caps;
-    query_caps = gst_caps_new_simple(h264_stream ? "video/x-h264" : "video/x-raw",
-                                     "width", G_TYPE_INT, width,
-                                     "height", G_TYPE_INT, height,
-                                     "framerate", GST_TYPE_FRACTION, framerate, 1,
-                                     NULL);
-    return gst_caps_can_intersect(query_caps, src_caps);
+static bool format_supported_by_source(GstCaps *src_caps, GstCaps *query_caps, int width, int height, int framerate) {
+    gst_caps_set_simple(query_caps,
+                        "width", G_TYPE_INT, width,
+                        "height", G_TYPE_INT, height,
+                        "framerate", GST_TYPE_FRACTION, framerate, 1,
+                        NULL);
+    bool is_match = gst_caps_can_intersect(query_caps, src_caps);
+
+    // in case the camera has fps as 10000000/333333
+    if(!is_match) {
+        gst_caps_set_simple(query_caps,
+                            "framerate", GST_TYPE_FRACTION_RANGE, framerate, 1, framerate+1, 1,
+                            NULL);
+        is_match = gst_caps_can_intersect(query_caps, src_caps);
+    }
+
+    return is_match;
 }
 
-static bool resolution_supported(GstCaps *src_caps, CustomData &data, int width, int height, int framerate) {
-    if (format_supported_by_source(src_caps, true, width, height, framerate)) {
+static bool resolution_supported(GstCaps *src_caps, GstCaps *query_caps_raw, GstCaps *query_caps_h264,
+                                 CustomData &data, int width, int height, int framerate) {
+    if (query_caps_h264 && format_supported_by_source(src_caps, query_caps_h264, width, height, framerate)) {
         data.h264_stream_supported = true;
-    } else if (format_supported_by_source(src_caps, false, width, height, framerate)) {
+    } else if (query_caps_raw && format_supported_by_source(src_caps, query_caps_raw, width, height, framerate)) {
         data.h264_stream_supported = false;
     } else {
         return false;
@@ -285,31 +332,31 @@ void kinesis_video_init(CustomData *data, char *stream_name) {
     map<string, string> tags;
     char tag_name[MAX_TAG_NAME_LEN];
     char tag_val[MAX_TAG_VALUE_LEN];
-    sprintf(tag_name, "piTag");
-    sprintf(tag_val, "piValue");
+    SPRINTF(tag_name, "piTag");
+    SPRINTF(tag_val, "piValue");
     auto stream_definition = make_unique<StreamDefinition>(stream_name,
-                                                           hours(2),
+                                                           hours(DEFAULT_RETENTION_PERIOD_HOURS),
                                                            &tags,
-                                                           "",
-                                                           STREAMING_TYPE_REALTIME,
-                                                           "video/h264",
-                                                           milliseconds::zero(),
-                                                           seconds(2),
-                                                           milliseconds(1),
-                                                           true,//Construct a fragment at each key frame
-                                                           true,//Use provided frame timecode
-                                                           false,//Relative timecode
-                                                           true,//Ack on fragment is enabled
-                                                           true,//SDK will restart when error happens
-                                                           true,//recalculate_metrics
+                                                           DEFAULT_KMS_KEY_ID,
+                                                           DEFAULT_STREAMING_TYPE,
+                                                           DEFAULT_CONTENT_TYPE,
+                                                           duration_cast<milliseconds> (seconds(DEFAULT_MAX_LATENCY_SECONDS)),
+                                                           milliseconds(DEFAULT_FRAGMENT_DURATION_MILLISECONDS),
+                                                           milliseconds(DEFAULT_TIMECODE_SCALE_MILLISECONDS),
+                                                           DEFAULT_KEY_FRAME_FRAGMENTATION,
+                                                           DEFAULT_FRAME_TIMECODES,
+                                                           DEFAULT_ABSOLUTE_FRAGMENT_TIMES,
+                                                           DEFAULT_FRAGMENT_ACKS,
+                                                           DEFAULT_RESTART_ON_ERROR,
+                                                           DEFAULT_RECALCULATE_METRICS,
                                                            0,
-                                                           30,
-                                                           4 * 1024 * 1024,
-                                                           seconds(120),
-                                                           seconds(40),
-                                                           seconds(30),
-                                                           "V_MPEG4/ISO/AVC",
-                                                           "kinesis_video",
+                                                           DEFAULT_STREAM_FRAMERATE,
+                                                           DEFAULT_AVG_BANDWIDTH_BPS,
+                                                           seconds(DEFAULT_BUFFER_DURATION_SECONDS),
+                                                           seconds(DEFAULT_REPLAY_DURATION_SECONDS),
+                                                           seconds(DEFAULT_CONNECTION_STALENESS_SECONDS),
+                                                           DEFAULT_CODEC_ID,
+                                                           DEFAULT_TRACKNAME,
                                                            nullptr,
                                                            0);
     data->kinesis_video_stream = data->kinesis_video_producer->createStreamSync(move(stream_definition));
@@ -318,12 +365,12 @@ void kinesis_video_init(CustomData *data, char *stream_name) {
 }
 
 int gstreamer_init(int argc, char* argv[]) {
-    BasicConfigurator config;
-    config.configure();
+    PropertyConfigurator::doConfigure("kvs_log_configuration");
 
     if (argc < 2) {
         LOG_ERROR(
-                "Usage: AWS_ACCESS_KEY_ID=SAMPLEKEY AWS_SECRET_ACCESS_KEY=SAMPLESECRET ./kinesis_video_gstreamer_sample_app my-stream-name -w width -h height -f framerate -b bitrateInKBPS");
+                "Usage: AWS_ACCESS_KEY_ID=SAMPLEKEY AWS_SECRET_ACCESS_KEY=SAMPLESECRET ./kinesis_video_gstreamer_sample_app -w width -h height -f framerate -b bitrateInKBPS my-stream-name \n \
+           or AWS_ACCESS_KEY_ID=SAMPLEKEY AWS_SECRET_ACCESS_KEY=SAMPLESECRET ./kinesis_video_gstreamer_sample_app my-stream-name");
         return 1;
     }
 
@@ -338,47 +385,64 @@ int gstreamer_init(int argc, char* argv[]) {
     gst_init(&argc, &argv);
 
     /* init stream format */
-    int opt, width = 0, height = 0, framerate=30, bitrateInKBPS=512;
-    char *endptr;
-    while ((opt = getopt(argc, argv, "w:h:f:b:")) != -1) {
-        switch (opt) {
-        case 'w':
-            width = strtol(optarg, &endptr, 0);
-            if (*endptr != '\0') {
-                g_printerr("Invalid width value.\n");
-                return 1;
+    char stream_name[MAX_STREAM_NAME_LEN];
+    int width = 0, height = 0, framerate = 25, bitrateInKBPS = 512;
+    for (int i = 1; i < argc; i++) {
+        if (i < argc - 1) {
+            if ((0 == STRCMPI(argv[i], "-w")) ||
+                (0 == STRCMPI(argv[i], "/w")) ||
+                (0 == STRCMPI(argv[i], "--w"))) {
+                // process the width
+                if (STATUS_FAILED(STRTOI32(argv[i + 1], NULL, 10, &width))) {
+                    return 1;
+                }
             }
-            break;
-        case 'h':
-            height = strtol(optarg, &endptr, 0);
-            if (*endptr != '\0') {
-                g_printerr("Invalid height value.\n");
-                return 1;
+            else if ((0 == STRCMPI(argv[i], "-h")) ||
+                     (0 == STRCMPI(argv[i], "/h")) ||
+                     (0 == STRCMPI(argv[i], "--h"))) {
+                // process the width
+                if (STATUS_FAILED(STRTOI32(argv[i + 1], NULL, 10, &height))) {
+                    return 1;
+                }
             }
-            break;
-        case 'f':
-            framerate = strtol(optarg, &endptr, 0);
-            if (*endptr != '\0') {
-                g_printerr("Invalid framerate value.\n");
-                return 1;
+            else if ((0 == STRCMPI(argv[i], "-f")) ||
+                     (0 == STRCMPI(argv[i], "/f")) ||
+                     (0 == STRCMPI(argv[i], "--f"))) {
+                // process the width
+                if (STATUS_FAILED(STRTOI32(argv[i + 1], NULL, 10, &framerate))) {
+                    return 1;
+                }
             }
-            break;
-        case 'b':
-            bitrateInKBPS = strtol(optarg, &endptr, 0);
-            if (*endptr != '\0') {
-                g_printerr("Invalid bitrate value.\n");
-                return 1;
+            else if ((0 == STRCMPI(argv[i], "-b")) ||
+                     (0 == STRCMPI(argv[i], "/b")) ||
+                     (0 == STRCMPI(argv[i], "--b"))) {
+                // process the width
+                if (STATUS_FAILED(STRTOI32(argv[i + 1], NULL, 10, &bitrateInKBPS))) {
+                    return 1;
+                }
             }
-            break;
-        default: /* '?' */
+            // skip the index
+            i++;
+        }
+        else if (0 == STRCMPI(argv[i], "-?") ||
+                 0 == STRCMPI(argv[i], "--?") ||
+                 0 == STRCMPI(argv[i], "--help")) {
             g_printerr("Invalid arguments\n");
             return 1;
+        }
+        else if (argv[i][0] == '/' ||
+                 argv[i][0] == '-') {
+            // Unknown option
+            g_printerr("Invalid arguments\n");
+            return 1;
+        }
+        else {
+            // Assume it's the stream name
+            STRNCPY(stream_name, argv[i], MAX_STREAM_NAME_LEN);
         }
     }
 
     /* init Kinesis Video */
-    char stream_name[MAX_STREAM_NAME_LEN];
-    SNPRINTF(stream_name, MAX_STREAM_NAME_LEN, argv[optind]);
     kinesis_video_init(&data, stream_name);
 
     if ((width == 0 && height != 0) || (width != 0 && height == 0)) {
@@ -411,6 +475,9 @@ int gstreamer_init(int argc, char* argv[]) {
             isOnRpi = false;
         }
         data.source = gst_element_factory_make("v4l2src", "source");
+        if (!data.source) {
+            data.source = gst_element_factory_make("ksvideosrc", "source");
+        }
         vtenc = false;
     }
 
@@ -437,25 +504,41 @@ int gstreamer_init(int argc, char* argv[]) {
     GstCaps *src_caps = gst_pad_query_caps(srcpad, NULL);
     gst_element_set_state(data.source, GST_STATE_NULL);
 
+    GstCaps *query_caps_raw = gst_caps_new_simple("video/x-raw",
+                                                  "width", G_TYPE_INT, width,
+                                                  "height", G_TYPE_INT, height,
+                                                  NULL);
+    GstCaps *query_caps_h264 = gst_caps_new_simple("video/x-h264",
+                                                   "width", G_TYPE_INT, width,
+                                                   "height", G_TYPE_INT, height,
+                                                   NULL);
+
     if (width != 0 && height != 0) {
-        if (!resolution_supported(src_caps, data, width, height, framerate)) {
+        if (!resolution_supported(src_caps, query_caps_raw, query_caps_h264, data, width, height, framerate)) {
             g_printerr("Resolution %dx%d not supported by video source\n", width, height);
             return 1;
         }
     } else {
-        vector<int> res_width = {1920, 1280, 640};
-        vector<int> res_height = {1080, 720, 480};
+        vector<int> res_width = {640, 1280, 1920};
+        vector<int> res_height = {480, 720, 1080};
+        vector<int> fps = {30, 25, 20};
         bool found_resolution = false;
         for (int i = 0; i < res_width.size(); i++) {
             width = res_width[i];
             height = res_height[i];
-            if (resolution_supported(src_caps, data, width, height, framerate)) {
-                found_resolution = true;
+            for (int j = 0; j < fps.size(); j++) {
+                framerate = fps[j];
+                if (resolution_supported(src_caps, query_caps_raw, query_caps_h264, data, width, height, framerate)) {
+                    found_resolution = true;
+                    break;
+                }
+            }
+            if (found_resolution) {
                 break;
             }
         }
         if (!found_resolution) {
-            g_printerr("Default list of resolutions not supported by video source\n");
+            g_printerr("Default list of resolutions (1920x1080, 1280x720, 640x480) are not supported by video source\n");
             return 1;
         }
     }
@@ -474,23 +557,20 @@ int gstreamer_init(int argc, char* argv[]) {
     }
 
     /* source filter */
-    GstCaps *source_caps;
     if (!data.h264_stream_supported) {
-        source_caps = gst_caps_new_simple("video/x-raw",
-                                          "format", G_TYPE_STRING, "I420",
-                                          "width", G_TYPE_INT, width,
-                                          "height", G_TYPE_INT, height,
-                                          "framerate", GST_TYPE_FRACTION, framerate, 1,
-                                          NULL);
+        gst_caps_set_simple(query_caps_raw,
+                            "format", G_TYPE_STRING, "I420",
+                            NULL);
+        g_object_set(G_OBJECT (data.source_filter), "caps", query_caps_raw, NULL);
     } else {
-        source_caps = gst_caps_new_simple("video/x-h264",
-                                          "stream-format", G_TYPE_STRING, "byte-stream",
-                                          "alignment", G_TYPE_STRING, "au",
-                                          NULL);
+        gst_caps_set_simple(query_caps_h264,
+                            "stream-format", G_TYPE_STRING, "byte-stream",
+                            "alignment", G_TYPE_STRING, "au",
+                            NULL);
+        g_object_set(G_OBJECT (data.source_filter), "caps", query_caps_h264, NULL);
     }
-
-    g_object_set(G_OBJECT (data.source_filter), "caps", source_caps, NULL);
-    gst_caps_unref(source_caps);
+    gst_caps_unref(query_caps_h264);
+    gst_caps_unref(query_caps_raw);
 
     /* configure encoder */
     if (!data.h264_stream_supported){
@@ -498,7 +578,8 @@ int gstreamer_init(int argc, char* argv[]) {
             g_object_set(G_OBJECT (data.encoder), "allow-frame-reordering", FALSE, "realtime", TRUE, "max-keyframe-interval",
                               45, "bitrate", bitrateInKBPS, NULL);
         } else if (isOnRpi) {
-            g_object_set(G_OBJECT (data.encoder), "control-rate", 1, "target-bitrate", bitrateInKBPS*10000, NULL);
+            g_object_set(G_OBJECT (data.encoder), "control-rate", 2, "target-bitrate", bitrateInKBPS*1000,
+                "periodicty-idr", 45, "inline-header", FALSE, NULL);
         } else {
             g_object_set(G_OBJECT (data.encoder), "bframes", 0, "key-int-max", 45, "bitrate", bitrateInKBPS, NULL);
         }
@@ -509,9 +590,6 @@ int gstreamer_init(int argc, char* argv[]) {
     GstCaps *h264_caps = gst_caps_new_simple("video/x-h264",
                                              "stream-format", G_TYPE_STRING, "avc",
                                              "alignment", G_TYPE_STRING, "au",
-                                             "width", G_TYPE_INT, width,
-                                             "height", G_TYPE_INT, height,
-                                             "framerate", GST_TYPE_FRACTION, framerate, 1,
                                              NULL);
     if (!data.h264_stream_supported) {
         gst_caps_set_simple(h264_caps, "profile", G_TYPE_STRING, "baseline",
@@ -528,14 +606,14 @@ int gstreamer_init(int argc, char* argv[]) {
     if (!data.h264_stream_supported) {
         gst_bin_add_many(GST_BIN (data.pipeline), data.source, data.video_convert, data.source_filter, data.encoder, data.h264parse, data.filter,
             data.appsink, NULL);
-        if (gst_element_link_many(data.source, data.video_convert, data.source_filter, data.encoder, data.h264parse, data.filter, data.appsink, NULL) != TRUE) {
+        if (!gst_element_link_many(data.source, data.video_convert, data.source_filter, data.encoder, data.h264parse, data.filter, data.appsink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             gst_object_unref(data.pipeline);
             return 1;
         }
     } else {
-        gst_bin_add_many(GST_BIN (data.pipeline), data.source, data.h264parse, data.filter, data.appsink, NULL);
-        if (gst_element_link_many(data.source, data.h264parse, data.filter, data.appsink, NULL) != TRUE) {
+        gst_bin_add_many(GST_BIN (data.pipeline), data.source, data.source_filter, data.h264parse, data.filter, data.appsink, NULL);
+        if (!gst_element_link_many(data.source, data.source_filter, data.h264parse, data.filter, data.appsink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             gst_object_unref(data.pipeline);
             return 1;

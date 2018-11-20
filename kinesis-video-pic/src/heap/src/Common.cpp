@@ -13,6 +13,7 @@ STATUS validateHeap(PHeap pHeap)
 #ifdef HEAP_DEBUG
     return heapDebugCheckAllocator(pHeap, FALSE);
 #else
+    UNUSED_PARAM(pHeap);
     return STATUS_SUCCESS;
 #endif
 
@@ -221,7 +222,7 @@ DEFINE_HEAP_FREE(commonHeapFree)
 
     overallSize = pBaseHeap->getAllocationSizeFn(pHeap, handle);
 
-    CHK_ERR(overallSize != INVALID_ALLOCATION_VALUE && pHeap->heapSize - overallSize >= 0,
+    CHK_ERR(overallSize != INVALID_ALLOCATION_VALUE && pHeap->heapSize >= overallSize,
         STATUS_HEAP_CORRUPTED,
         "Invalid allocation or heap corruption trying to free handle 0x%016" PRIx64,
         handle);
@@ -302,30 +303,4 @@ VOID incrementUsage(PHeap pHeap, UINT32 overallSize) {
 VOID decrementUsage(PHeap pHeap, UINT32 overallSize) {
     pHeap->heapSize -= overallSize;
     pHeap->numAlloc--;
-}
-
-/**
- * Prints the content of the memory
- */
-VOID printMemory(PVOID pMem, UINT32 size)
-{
-    DLOGE("============================================");
-    DLOGE("Dumping memory: %p, size: %d", pMem, size);
-    DLOGE("++++++++++++++++++++++++++++++++++++++++++++");
-    CHAR buf[256];
-    PCHAR pCur;
-    pCur = buf;
-    PBYTE pByte = (PBYTE) pMem;
-    for(UINT32 i = 0; i < size; i++) {
-        sprintf(pCur, "%02x ", *pByte++);
-        pCur += 3;
-        if ((i + 1) % 16 == 0) {
-            DLOGE("%s", buf);
-            buf[0] = 0;
-            pCur = buf;
-        }
-    }
-    DLOGE("++++++++++++++++++++++++++++++++++++++++++++");
-    DLOGE("Dumping memory done!");
-    DLOGE("============================================");
 }

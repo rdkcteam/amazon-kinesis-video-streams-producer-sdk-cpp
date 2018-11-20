@@ -27,6 +27,27 @@ LOGGER_TAG("com.amazonaws.kinesis.video.gstreamer");
 #define DEFAULT_REGION_ENV_VAR "AWS_DEFAULT_REGION"
 #define MAX_URL_LENGTH 65536 // https://stackoverflow.com/questions/417142/what-is-the-maximum-length-of-a-url-in-different-browsers
 
+#define DEFAULT_RETENTION_PERIOD_HOURS 2
+#define DEFAULT_KMS_KEY_ID ""
+#define DEFAULT_STREAMING_TYPE STREAMING_TYPE_REALTIME
+#define DEFAULT_CONTENT_TYPE "video/h264"
+#define DEFAULT_MAX_LATENCY_SECONDS 60
+#define DEFAULT_FRAGMENT_DURATION_MILLISECONDS 2000
+#define DEFAULT_TIMECODE_SCALE_MILLISECONDS 1
+#define DEFAULT_KEY_FRAME_FRAGMENTATION TRUE
+#define DEFAULT_FRAME_TIMECODES TRUE
+#define DEFAULT_ABSOLUTE_FRAGMENT_TIMES TRUE
+#define DEFAULT_FRAGMENT_ACKS TRUE
+#define DEFAULT_RESTART_ON_ERROR TRUE
+#define DEFAULT_RECALCULATE_METRICS TRUE
+#define DEFAULT_STREAM_FRAMERATE 25
+#define DEFAULT_AVG_BANDWIDTH_BPS (4 * 1024 * 1024)
+#define DEFAULT_BUFFER_DURATION_SECONDS 180
+#define DEFAULT_REPLAY_DURATION_SECONDS 40
+#define DEFAULT_CONNECTION_STALENESS_SECONDS 60
+#define DEFAULT_CODEC_ID "V_MPEG4/ISO/AVC"
+#define DEFAULT_TRACKNAME "kinesis_video"
+
 namespace com {
     namespace amazonaws {
         namespace kinesis {
@@ -34,6 +55,10 @@ namespace com {
 
                 class SampleClientCallbackProvider : public ClientCallbackProvider {
                 public:
+
+                    UINT64 getCallbackCustomData() override {
+                        return reinterpret_cast<UINT64> (this);
+                    }
 
                     StorageOverflowPressureFunc getStorageOverflowPressureCallback() override {
                         return storageOverflowPressure;
@@ -44,6 +69,10 @@ namespace com {
 
                 class SampleStreamCallbackProvider : public StreamCallbackProvider {
                 public:
+
+                    UINT64 getCallbackCustomData() override {
+                        return reinterpret_cast<UINT64> (this);
+                    }
 
                     StreamConnectionStaleFunc getStreamConnectionStaleCallback() override {
                         return streamConnectionStaleHandler;
@@ -188,13 +217,20 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
 
     bool delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
     FRAME_FLAGS kinesis_video_flags;
+
+    if (GST_BUFFER_PTS_IS_VALID(buffer)) {
+         buffer->dts = buffer->pts;
+    }
+    else {
+         buffer->pts = buffer->dts;
+    }
+
     if (!delta) {
-        buffer->pts = buffer->dts;
         kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
     } else {
         kinesis_video_flags = FRAME_FLAG_NONE;
     }
-    DLOGE("kinesis_video_flags=%u pts=%llu dts=%llu  \n", kinesis_video_flags, buffer->pts, buffer->dts);
+    LOG_INFO("kinesis_video_flags=" << kinesis_video_flags << ", pts=" << buffer->pts << ", dts=" << buffer->dts);
 
     if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, std::chrono::nanoseconds(buffer->pts),
                            std::chrono::nanoseconds(buffer->dts), kinesis_video_flags)) {
@@ -270,31 +306,31 @@ void kinesis_video_init(CustomData *data, char *stream_name) {
     map<string, string> tags;
     char tag_name[MAX_TAG_NAME_LEN];
     char tag_val[MAX_TAG_VALUE_LEN];
-    sprintf(tag_name, "piTag");
-    sprintf(tag_val, "piValue");
+    SPRINTF(tag_name, "piTag");
+    SPRINTF(tag_val, "piValue");
     auto stream_definition = make_unique<StreamDefinition>(stream_name,
-                                                           hours(2),
+                                                           hours(DEFAULT_RETENTION_PERIOD_HOURS),
                                                            &tags,
-                                                           "",
-                                                           STREAMING_TYPE_REALTIME,
-                                                           "video/h264",
-                                                           milliseconds::zero(),
-                                                           seconds(2),
-                                                           milliseconds(1),
-                                                           true,
-                                                           true,
-                                                           false,
-                                                           true,
-                                                           true,
-                                                           true,
+                                                           DEFAULT_KMS_KEY_ID,
+                                                           DEFAULT_STREAMING_TYPE,
+                                                           DEFAULT_CONTENT_TYPE,
+                                                           duration_cast<milliseconds> (seconds(DEFAULT_MAX_LATENCY_SECONDS)),
+                                                           milliseconds(DEFAULT_FRAGMENT_DURATION_MILLISECONDS),
+                                                           milliseconds(DEFAULT_TIMECODE_SCALE_MILLISECONDS),
+                                                           DEFAULT_KEY_FRAME_FRAGMENTATION,
+                                                           DEFAULT_FRAME_TIMECODES,
+                                                           DEFAULT_ABSOLUTE_FRAGMENT_TIMES,
+                                                           DEFAULT_FRAGMENT_ACKS,
+                                                           DEFAULT_RESTART_ON_ERROR,
+                                                           DEFAULT_RECALCULATE_METRICS,
                                                            0,
-                                                           30,
-                                                           4 * 1024 * 1024,
-                                                           seconds(120),
-                                                           seconds(40),
-                                                           seconds(30),
-                                                           "V_MPEG4/ISO/AVC",
-                                                           "kinesis_video",
+                                                           DEFAULT_STREAM_FRAMERATE,
+                                                           DEFAULT_AVG_BANDWIDTH_BPS,
+                                                           seconds(DEFAULT_BUFFER_DURATION_SECONDS),
+                                                           seconds(DEFAULT_REPLAY_DURATION_SECONDS),
+                                                           seconds(DEFAULT_CONNECTION_STALENESS_SECONDS),
+                                                           DEFAULT_CODEC_ID,
+                                                           DEFAULT_TRACKNAME,
                                                            nullptr,
                                                            0);
     data->kinesis_video_stream = data->kinesis_video_producer->createStreamSync(move(stream_definition));
@@ -315,8 +351,7 @@ static void cb_rtsp_pad_created(GstElement *element, GstPad *pad, CustomData *da
 }
 
 int gstreamer_init(int argc, char *argv[]) {
-    BasicConfigurator config;
-    config.configure();
+    PropertyConfigurator::doConfigure("kvs_log_configuration");
 
     if (argc < 3) {
         LOG_ERROR(
@@ -326,7 +361,6 @@ int gstreamer_init(int argc, char *argv[]) {
 
     CustomData data;
     GstStateChangeReturn ret;
-    bool vtenc;
 
     /* init data struct */
     memset(&data, 0, sizeof(data));
@@ -350,7 +384,7 @@ int gstreamer_init(int argc, char *argv[]) {
 
     // RTSP source component
     data.source = gst_element_factory_make("rtspsrc", "source");
- 
+
     data.filter = gst_element_factory_make("capsfilter", "encoder_filter");
 
     GstCaps *h264_caps = gst_caps_new_simple("video/x-h264",
@@ -394,9 +428,9 @@ int gstreamer_init(int argc, char *argv[]) {
     LOG_DEBUG("Pipeline built, elements *NOT* yet linked");
 
     /* Leave the actual source out - this will be done when the pad is added */
-    if (gst_element_link_many(data.depay, data.filter,
+    if (!gst_element_link_many(data.depay, data.filter,
                               data.appsink,
-                              NULL) != TRUE) {
+                              NULL)) {
 
         g_printerr("Elements could not be linked.\n");
         gst_object_unref(data.pipeline);

@@ -164,6 +164,12 @@ extern "C" {
 #define STATUS_ACK_ERR_UNKNOWN_ACK_ERROR                                            STATUS_CLIENT_BASE + 0x0000006f
 #define STATUS_MISSING_ERR_ACK_ID                                                   STATUS_CLIENT_BASE + 0x00000070
 #define STATUS_INVALID_ACK_SEGMENT_LEN                                              STATUS_CLIENT_BASE + 0x00000071
+#define STATUS_AWAITING_PERSISTED_ACK                                               STATUS_CLIENT_BASE + 0x00000072
+#define STATUS_PERSISTED_ACK_TIMEOUT                                                STATUS_CLIENT_BASE + 0x00000073
+#define STATUS_MAX_FRAGMENT_METADATA_COUNT                                          STATUS_CLIENT_BASE + 0x00000074
+#define STATUS_ACK_ERR_FRAGMENT_METADATA_LIMIT_REACHED                              STATUS_CLIENT_BASE + 0x00000075
+#define STATUS_BLOCKING_PUT_INTERRUPTED_STREAM_TERMINATED                           STATUS_CLIENT_BASE + 0x00000076
+#define STATUS_INVALID_METADATA_NAME                                                STATUS_CLIENT_BASE + 0x00000077
 
 ////////////////////////////////////////////////////
 // Main defines
@@ -179,9 +185,9 @@ extern "C" {
 #define MAX_TAG_COUNT                            50
 
 /**
- * Max stream count
+ * Max stream count for sanity validation
  */
-#define MAX_STREAM_COUNT                         128
+#define MAX_STREAM_COUNT                         1024 * 1024
 
 /**
  * Max stream name length chars
@@ -232,6 +238,16 @@ extern "C" {
  * Max number of fragment metadatas in the segment
  */
 #define MAX_SEGMENT_METADATA_COUNT               1024
+
+/**
+ * Minimal valid retention period
+ */
+#define MIN_RETENTION_PERIOD                     (1 * HUNDREDS_OF_NANOS_IN_AN_HOUR)
+
+/**
+ * Maximal size of the metadata queue for a fragment
+ */
+#define MAX_FRAGMENT_METADATA_COUNT              10
 
 /**
  * Max length of the fragment sequence number
@@ -339,6 +355,11 @@ extern "C" {
  * staleness is not required.
  */
 #define CONNECTION_STALENESS_DETECTION_SENTINEL     0
+
+/**
+ * Retention period sentinel value indicating no retention is needed
+ */
+#define RETENTION_PERIOD_SENTINEL                   0
 
 /**
  * Current versions for the public structs
@@ -518,9 +539,6 @@ typedef enum {
     // Bad request
     SERVICE_CALL_BAD_REQUEST = 400,
 
-    // Resource deleted exception
-    SERVICE_CALL_RESOURCE_DELETED = SERVICE_CALL_BAD_REQUEST,
-
     // Forbidden
     SERVICE_CALL_FORBIDDEN = 403,
 
@@ -544,6 +562,9 @@ typedef enum {
 
     // Network connection timeout
     SERVICE_CALL_NETWORK_CONNECTION_TIMEOUT = 599,
+
+    // Resource deleted exception
+    SERVICE_CALL_RESOURCE_DELETED = 10400,
 
     // The stream authorization is in a grace period
     SERVICE_CALL_STREAM_AUTH_IN_GRACE_PERIOD = 10401,
@@ -587,6 +608,9 @@ typedef enum {
 
     // Inactive stream
     SERVICE_CALL_RESULT_STREAM_NOT_ACTIVE = 4008,
+
+    // Fragment metadata name/value/count limit reached
+    SERVICE_CALL_RESULT_FRAGMENT_METADATA_LIMIT_REACHED = 4009,
 
     // KMS specific error - KMS access denied while encrypting data
     SERVICE_CALL_RESULT_KMS_KEY_ACCESS_DENIED = 4500,
@@ -1199,8 +1223,8 @@ typedef STATUS (*DroppedFragmentReportFunc)(UINT64,
                                             UINT64);
 
 /**
- * Reports a stream error due to an error ACK. The client should terminate
- * the current stream as the inlet host has/will close the connection.
+ * Reports a stream error due to an error ACK. The PIC will initiate the termination
+ * of the stream itself as the Inlet host has/will close the connection regardless.
  *
  * @param 1 UINT64 - Custom handle passed by the caller.
  * @param 2 STREAM_HANDLE - The stream to report for.
@@ -1257,13 +1281,13 @@ typedef STATUS (*StreamReadyFunc)(UINT64,
  *
  * @param 1 UINT64 - Custom handle passed by the caller.
  * @param 2 STREAM_HANDLE - The stream to report for.
- * @param 3 UINT64 - Client upload handle.
+ * @param 3 UPLOAD_HANDLE - Client upload handle.
  *
  * @return Status of the callback
  */
 typedef STATUS (*StreamClosedFunc)(UINT64,
                                    STREAM_HANDLE,
-                                   UINT64);
+                                   UPLOAD_HANDLE);
 
 /**
  * Notifies that a given stream has data available.
@@ -1271,7 +1295,7 @@ typedef STATUS (*StreamClosedFunc)(UINT64,
  * @param 1 UINT64 - Custom handle passed by the caller.
  * @param 2 STREAM_HANDLE - The stream to report for.
  * @param 3 PCHAR - Stream name.
- * @param 4 UINT64 - Current client stream handle passed by the caller.
+ * @param 4 UPLOAD_HANDLE - Current client stream upload handle passed by the caller.
  * @param 5 UINT64 - The duration of content currently available in 100ns.
  * @param 6 UINT64 - The size of content in bytes currently available.
  *
@@ -1280,7 +1304,7 @@ typedef STATUS (*StreamClosedFunc)(UINT64,
 typedef STATUS (*StreamDataAvailableFunc)(UINT64,
                                           STREAM_HANDLE,
                                           PCHAR,
-                                          UINT64,
+                                          UPLOAD_HANDLE,
                                           UINT64,
                                           UINT64);
 
@@ -1326,7 +1350,7 @@ typedef VOID (*UnlockMutexFunc)(UINT64,
  * @param 2 MUTEX - The mutex to try to lock.
  *
  */
-typedef VOID (*TryLockMutexFunc)(UINT64,
+typedef BOOL (*TryLockMutexFunc)(UINT64,
                                  MUTEX);
 
 /**
@@ -1351,6 +1375,15 @@ typedef VOID (*FreeMutexFunc)(UINT64,
  * @return Pseudo-random number
  */
 typedef UINT32 (*GetRandomNumberFunc)(UINT64);
+
+///////////////////////////////////////////////////////////////
+// Logging callbacks
+///////////////////////////////////////////////////////////////
+
+/**
+ * Logs a line of text with the tag and the log level - see PlatformUtils.h for more info
+ */
+typedef logPrintFunc LogPrintFunc;
 
 ///////////////////////////////////////////////////////////////
 // Service call callbacks
@@ -1528,6 +1561,7 @@ struct __ClientCallbacks {
     CreateDeviceFunc createDeviceFn;
     DeviceCertToTokenFunc deviceCertToTokenFn;
     ClientReadyFunc clientReadyFn;
+    LogPrintFunc logPrintFn;
 };
 typedef __ClientCallbacks* PClientCallbacks;
 
@@ -1606,18 +1640,45 @@ PUBLIC_API STATUS stopKinesisVideoStream(STREAM_HANDLE);
 PUBLIC_API STATUS putKinesisVideoFrame(STREAM_HANDLE, PFrame);
 
 /**
- * Updates the codec private data associated with the stream.
+ * Gets the data for the stream.
  *
- * NOTE: Many encoders provide CPD after they have been initialized.
- * This update should happen in states other than STREAMING state.
+ * NOTE: The function will try to fill as much buffer as available to fill
+ * and will return a STATUS_NO_MORE_DATA_AVAILABLE status code. The caller
+ * should check the returned filled size for partially filled buffers.
  *
  * @param 1 STREAM_HANDLE - the stream handle.
- * @param 2 UINT32 - Codec Private Data size
- * @param 3 PBYTE - Codec Private Data bits.
+ * @param 2 PUINT64 - Client stream upload handle.
+ * @param 3 PBYTE - Buffer to fill in.
+ * @param 4 UINT32 - Size of the buffer to fill up-to.
+ * @param 5 PUINT32 - Actual size filled.
  *
  * @return Status of the function call.
  */
-PUBLIC_API STATUS kinesisVideoStreamFormatChanged(STREAM_HANDLE, UINT32, PBYTE);
+PUBLIC_API STATUS getKinesisVideoStreamData(STREAM_HANDLE, PUINT64, PBYTE, UINT32, PUINT32);
+
+/**
+ * Inserts a "metadata" - a key/value string pair into the stream.
+ *
+ * NOTE: The metadata are modelled as MKV tags and are not immediately put into the stream as
+ * it might break the fragment.
+ * This is a limitation of MKV format as Tags are level 1 elements.
+ * Instead, they will be accumulated and inserted in-between the fragments and at the end of the stream.
+ *
+ * MKV spec is available at: https://matroska.org/technical/specs/index.html
+ *
+ * Putting a "persistent" metadata will result in the metadata being inserted before every fragment.
+ * The metadata can be changed by calling this function with the same name and a different value.
+ * Specifying an empty string for the value for a persistent metadata will clear it and it won't
+ * be applied to the consecutive fragments.
+ *
+ * @param 1 STREAM_HANDLE - the stream handle.
+ * @param 2 PCHAR - the metadata name.
+ * @param 3 PCHAR - the metadata value.
+ * @param 4 BOOL - Whether to keep applying the metadata to following fragments.
+ *
+ * @return Status of the function call.
+ */
+PUBLIC_API STATUS putKinesisVideoFragmentMetadata(STREAM_HANDLE, PCHAR, PCHAR, BOOL);
 
 ////////////////////////////////////////////////////
 // Diagnostics functions
@@ -1722,11 +1783,11 @@ PUBLIC_API STATUS getStreamingEndpointResultEvent(UINT64, SERVICE_CALL_RESULT, P
  *
  * @param 1 UINT64 - the custom data passed to the callback by Kinesis Video.
  * @param 2 SERVICE_CALL_RESULT - Service call result.
- * @param 3 UINT64 - Client stream handle.
+ * @param 3 UPLOAD_HANDLE - Client stream upload handle.
  *
  * @return Status of the function call.
  */
-PUBLIC_API STATUS putStreamResultEvent(UINT64, SERVICE_CALL_RESULT, UINT64);
+PUBLIC_API STATUS putStreamResultEvent(UINT64, SERVICE_CALL_RESULT, UPLOAD_HANDLE);
 
 /**
  * Tag resource API call result event
@@ -1743,32 +1804,29 @@ PUBLIC_API STATUS tagResourceResultEvent(UINT64, SERVICE_CALL_RESULT);
 ////////////////////////////////////////////////////
 
 /**
- * Gets the data for the stream.
+ * Updates the codec private data associated with the stream.
  *
- * NOTE: The function will try to fill as much buffer as available to fill
- * and will return a STATUS_NO_MORE_DATA_AVAILABLE status code. The caller
- * should check the returned filled size for partially filled buffers.
+ * NOTE: Many encoders provide CPD after they have been initialized.
+ * This update should happen in states other than STREAMING state.
  *
  * @param 1 STREAM_HANDLE - the stream handle.
- * @param 2 PUINT64 - Client stream handle.
- * @param 3 PBYTE - Buffer to fill in
- * @param 4 UINT32 - Size of the buffer to fill up-to
- * @param 6 PUINT32 - Actual size filled.
+ * @param 2 UINT32 - Codec Private Data size
+ * @param 3 PBYTE - Codec Private Data bits.
  *
  * @return Status of the function call.
  */
-PUBLIC_API STATUS getKinesisVideoStreamData(STREAM_HANDLE, PUINT64, PBYTE, UINT32, PUINT32);
+PUBLIC_API STATUS kinesisVideoStreamFormatChanged(STREAM_HANDLE, UINT32, PBYTE);
 
 /**
  * Streaming has been terminated unexpectedly
  *
  * @param 1 STREAM_HANDLE - the stream handle.
- * @param 2 UINT64 - Stream upload handle returned by the client.
+ * @param 2 UPLOAD_HANDLE - Stream upload handle returned by the client.
  * @param 3 SERVICE_CALL_RESULT - Result returned.
  *
  * @return Status of the function call.
  */
-PUBLIC_API STATUS kinesisVideoStreamTerminated(STREAM_HANDLE, UINT64, SERVICE_CALL_RESULT);
+PUBLIC_API STATUS kinesisVideoStreamTerminated(STREAM_HANDLE, UPLOAD_HANDLE, SERVICE_CALL_RESULT);
 
 /**
  * Stream fragment ACK received.

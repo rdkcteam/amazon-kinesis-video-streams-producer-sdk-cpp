@@ -21,13 +21,13 @@ KinesisVideoClientWrapper::KinesisVideoClientWrapper(JNIEnv* env,
 
     // Set the callbacks
     if (!setCallbacks(env, thiz)) {
-        throwNativeException(env, EXCEPTION_NAME, "Failed to set the callbacks.", retStatus);
+        throwNativeException(env, EXCEPTION_NAME, "Failed to set the callbacks.", STATUS_INVALID_ARG);
         return;
     }
 
     // Extract the DeviceInfo structure
     if (!setDeviceInfo(env, deviceInfo, &mDeviceInfo)) {
-        throwNativeException(env, EXCEPTION_NAME, "Failed to set the DeviceInfo structure.", retStatus);
+        throwNativeException(env, EXCEPTION_NAME, "Failed to set the DeviceInfo structure.", STATUS_INVALID_ARG);
         return;
     }
 
@@ -120,6 +120,35 @@ void KinesisVideoClientWrapper::stopKinesisVideoStream(jlong streamHandle)
     {
         DLOGE("Failed to stop kinesis video stream with status code 0x%08x", retStatus);
         throwNativeException(env, EXCEPTION_NAME, "Failed to stop kinesis video stream.", retStatus);
+        return;
+    }
+}
+
+void KinesisVideoClientWrapper::freeKinesisVideoStream(jlong streamHandle)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    STREAM_HANDLE handle = (STREAM_HANDLE) streamHandle;
+    JNIEnv *env;
+    mJvm->GetEnv((PVOID*) &env, JNI_VERSION_1_6);
+
+    if (!IS_VALID_CLIENT_HANDLE(mClientHandle))
+    {
+        DLOGE("Invalid client object");
+        throwNativeException(env, EXCEPTION_NAME, "Invalid call after the client is freed.", STATUS_INVALID_OPERATION);
+        return;
+    }
+
+    if (!IS_VALID_STREAM_HANDLE(streamHandle))
+    {
+        DLOGE("Invalid stream handle 0x%016" PRIx64, (UINT64) streamHandle);
+        throwNativeException(env, EXCEPTION_NAME, "Invalid stream handle.", STATUS_INVALID_OPERATION);
+        return;
+    }
+
+    if (STATUS_FAILED(retStatus = ::freeKinesisVideoStream(&handle)))
+    {
+        DLOGE("Failed to free kinesis video stream with status code 0x%08x", retStatus);
+        throwNativeException(env, EXCEPTION_NAME, "Failed to free kinesis video stream.", retStatus);
         return;
     }
 }
@@ -334,14 +363,73 @@ void KinesisVideoClientWrapper::putKinesisVideoFrame(jlong streamHandle, jobject
     }
 }
 
-UINT32 KinesisVideoClientWrapper::getKinesisVideoStreamData(jlong streamHandle, jobject dataBuffer, jint offset, jint length)
+void KinesisVideoClientWrapper::putKinesisVideoFragmentMetadata(jlong streamHandle, jstring metadataName, jstring metadataValue, jboolean persistent)
 {
     STATUS retStatus = STATUS_SUCCESS;
     JNIEnv *env;
     mJvm->GetEnv((PVOID*) &env, JNI_VERSION_1_6);
-    UINT64 clientStreamHandle = 0;
+
+    if (!IS_VALID_CLIENT_HANDLE(mClientHandle))
+    {
+        DLOGE("Invalid client object");
+        throwNativeException(env, EXCEPTION_NAME, "Invalid call after the client is freed.", STATUS_INVALID_OPERATION);
+        return;
+    }
+
+    if (!IS_VALID_STREAM_HANDLE(streamHandle))
+    {
+        DLOGE("Invalid stream handle 0x%016" PRIx64, (UINT64) streamHandle);
+        throwNativeException(env, EXCEPTION_NAME, "Invalid stream handle.", STATUS_INVALID_OPERATION);
+        return;
+    }
+
+    if (metadataName == NULL || metadataValue == NULL)
+    {
+        DLOGE("metadataName or metadataValue is NULL");
+        throwNativeException(env, EXCEPTION_NAME, "metadataName or metadataValue is NULL.", STATUS_INVALID_OPERATION);
+        return;
+    }
+
+    // Convert the jstring to PCHAR
+    PCHAR pMetadataNameStr = (PCHAR) env->GetStringUTFChars(metadataName, NULL);
+    PCHAR pMetadataValueStr = (PCHAR) env->GetStringUTFChars(metadataValue, NULL);
+
+
+    // Call the API
+    retStatus = ::putKinesisVideoFragmentMetadata(streamHandle, pMetadataNameStr, pMetadataValueStr, persistent == JNI_TRUE);
+
+
+    // Release the string
+    env->ReleaseStringUTFChars(metadataName, pMetadataNameStr);
+    env->ReleaseStringUTFChars(metadataValue, pMetadataValueStr);
+
+    if (STATUS_FAILED(retStatus))
+    {
+        DLOGE("Failed to put a metadata with status code 0x%08x", retStatus);
+        throwNativeException(env, EXCEPTION_NAME, "Failed to put a metadata into the stream.", retStatus);
+        return;
+    }
+
+}
+
+void KinesisVideoClientWrapper::getKinesisVideoStreamData(jlong streamHandle, jobject dataBuffer, jint offset, jint length, jobject readResult)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    JNIEnv *env;
+    mJvm->GetEnv((PVOID*) &env, JNI_VERSION_1_6);
+    UINT64 uploadHandle = 0;
     UINT32 filledSize = 0, bufferSize = 0;
     PBYTE pBuffer = NULL;
+    jboolean isEos = JNI_FALSE;
+    jclass readResultClass;
+    jmethodID setterMethodId;
+
+    if (NULL == readResult)
+    {
+        DLOGE("NULL ReadResult object");
+        throwNativeException(env, EXCEPTION_NAME, "NULL ReadResult object is passsed.", STATUS_NULL_ARG);
+        goto CleanUp;
+    }
 
     if (!IS_VALID_CLIENT_HANDLE(mClientHandle))
     {
@@ -372,7 +460,7 @@ UINT32 KinesisVideoClientWrapper::getKinesisVideoStreamData(jlong streamHandle, 
         goto CleanUp;
     }
 
-    retStatus = ::getKinesisVideoStreamData(streamHandle, &clientStreamHandle, pBuffer, (UINT32) length, &filledSize);
+    retStatus = ::getKinesisVideoStreamData(streamHandle, &uploadHandle, pBuffer, (UINT32) length, &filledSize);
     if (STATUS_SUCCESS != retStatus && STATUS_NO_MORE_DATA_AVAILABLE != retStatus && STATUS_END_OF_STREAM != retStatus)
     {
         DLOGE("Failed to get data from the stream with status code 0x%08x", retStatus);
@@ -380,10 +468,33 @@ UINT32 KinesisVideoClientWrapper::getKinesisVideoStreamData(jlong streamHandle, 
         goto CleanUp;
     }
 
-    // If we have an end-of-stream then we will need to add an indicator by ORing with an MSB
     if (STATUS_END_OF_STREAM == retStatus) {
-        filledSize |= END_OF_STREAM_INDICATOR;
+        isEos = JNI_TRUE;
     }
+
+    // Get the class
+    readResultClass = env->GetObjectClass(readResult);
+    if (readResultClass == NULL){
+        DLOGE("Failed to get ReadResult class object");
+        throwNativeException(env, EXCEPTION_NAME, "Failed to get ReadResult class object.", STATUS_INVALID_OPERATION);
+        goto CleanUp;
+    }
+
+    // Get the Java method id
+    setterMethodId = env->GetMethodID(readResultClass, "setReadResult", "(JIZ)V");
+    if (setterMethodId == NULL)
+    {
+        DLOGE("Failed to get the setter method id.");
+        throwNativeException(env, EXCEPTION_NAME, "Failed to get setter method id.", STATUS_INVALID_OPERATION);
+        goto CleanUp;
+    }
+
+    // Call the setter method
+    env->CallVoidMethod(readResult,
+                        setterMethodId,
+                        uploadHandle,
+                        filledSize,
+                        isEos);
 
 CleanUp:
 
@@ -391,10 +502,7 @@ CleanUp:
     {
         DLOGE("Failed releasing kinesis video stream data buffer object.");
         throwNativeException(env, EXCEPTION_NAME, "Failed releasing kinesis video stream data buffer object.", STATUS_INVALID_OPERATION);
-        return 0;
     }
-
-    return filledSize;
 }
 
 void KinesisVideoClientWrapper::kinesisVideoStreamFragmentAck(jlong streamHandle, jlong uploadHandle, jobject fragmentAck)
@@ -843,6 +951,12 @@ BOOL KinesisVideoClientWrapper::setCallbacks(JNIEnv* env, jobject thiz)
     mClientCallbacks.createDeviceFn = createDeviceFunc;
     mClientCallbacks.deviceCertToTokenFn = deviceCertToTokenFunc;
 
+    // We do not expose logging functionality to Java
+    // as the signature of the function does not have "custom_data"
+    // to properly map to the client object.
+    // We will use the default logger for Java.
+    mClientCallbacks.logPrintFn = NULL;
+
     // Extract the method IDs for the callbacks and set a global reference
     jclass thizCls = env->GetObjectClass(thiz);
     if (thizCls == NULL) {
@@ -1006,13 +1120,7 @@ UINT64 KinesisVideoClientWrapper::getCurrentTimeFunc(UINT64 customData)
     DLOGS("TID 0x%016" PRIx64 " getCurrentTimeFunc called.", GETTID());
     UNUSED_PARAM(customData);
 
-    // We use System.currentTimeMillis() in Java land so need to enforce the UNIX time here.
-    struct timeval nowTime;
-    if (0 != gettimeofday(&nowTime, NULL)) {
-        return 0;
-    }
-
-    return (UINT64) nowTime.tv_sec * HUNDREDS_OF_NANOS_IN_A_SECOND + (UINT64) nowTime.tv_usec * HUNDREDS_OF_NANOS_IN_A_MICROSECOND;
+    return GETTIME();
 }
 
 UINT32 KinesisVideoClientWrapper::getRandomNumberFunc(UINT64 customData)
@@ -1043,7 +1151,7 @@ VOID KinesisVideoClientWrapper::unlockMutexFunc(UINT64 customData, MUTEX mutex)
     return MUTEX_UNLOCK(mutex);
 }
 
-VOID KinesisVideoClientWrapper::tryLockMutexFunc(UINT64 customData, MUTEX mutex)
+BOOL KinesisVideoClientWrapper::tryLockMutexFunc(UINT64 customData, MUTEX mutex)
 {
     DLOGS("TID 0x%016" PRIx64 " tryLockMutexFunc called.", GETTID());
     UNUSED_PARAM(customData);
@@ -1110,7 +1218,7 @@ STATUS KinesisVideoClientWrapper::getDeviceFingerprintFunc(UINT64 customData, PC
     if (jstr != NULL) {
         // Extract the bits from the byte buffer
         bufferPtr = env->GetStringChars(jstr, NULL);
-        strLen = STRLEN((PCHAR) bufferPtr);
+        strLen = (UINT32)STRLEN((PCHAR) bufferPtr);
         if (strLen >= MAX_AUTH_LEN) {
             retStatus = STATUS_INVALID_ARG;
             goto CleanUp;

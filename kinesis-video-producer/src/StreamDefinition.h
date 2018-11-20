@@ -35,7 +35,7 @@ public:
             STREAMING_TYPE streaming_type = STREAMING_TYPE_REALTIME,
             string content_type = "video/h264",
             duration<uint64_t, milli> max_latency = milliseconds::zero(),
-            duration<uint64_t> fragment_duration = seconds(2),
+            duration<uint64_t, milli> fragment_duration = milliseconds(2000),
             duration<uint64_t, milli> timecode_scale = milliseconds(1),
             bool key_frame_fragmentation = true,
             bool frame_timecodes = true,
@@ -106,7 +106,7 @@ public:
         stream_info_.streamCaps.codecPrivateData = (PBYTE) codecPrivateData;
 
         // Set the tags
-        stream_info_.tagCount = tags_.count();
+        stream_info_.tagCount = (UINT32)tags_.count();
         stream_info_.tags = tags_.asPTag();
     }
 

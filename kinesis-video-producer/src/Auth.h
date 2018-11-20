@@ -16,7 +16,7 @@ namespace com { namespace amazonaws { namespace kinesis { namespace video {
 */
 class Credentials {
 public:
-    Credentials() {}
+    Credentials() : access_key_(""), secret_key_(""), session_token_(""), expiration_(std::chrono::seconds(MAX_UINT64)) {}
 
     /**
     * Initializes object with access_key, secret_key, session_token and expiration.
@@ -30,6 +30,11 @@ public:
     access_key_(access_key), secret_key_(secret_key), session_token_(session_token), expiration_(expiration)
     {
     }
+
+    /**
+     * Virtual destructor
+     */
+    virtual ~Credentials() {}
 
     /**
     * Gets the underlying access key credential
@@ -142,13 +147,13 @@ public:
         SerializedCredentials *serializedCredentials = reinterpret_cast<SerializedCredentials *>(pBuffer);
 
         serializedCredentials->access_key_offset_ = sizeof(SerializedCredentials);
-        serializedCredentials->access_key_length_ = access_key_len;
+        serializedCredentials->access_key_length_ = (uint32_t)access_key_len;
         serializedCredentials->secret_key_offset_ =
                 serializedCredentials->access_key_offset_ + serializedCredentials->access_key_length_;
-        serializedCredentials->secret_key_length_ = secret_key_len;
+        serializedCredentials->secret_key_length_ = (uint32_t)secret_key_len;
         serializedCredentials->session_token_offset_ =
                 serializedCredentials->secret_key_offset_ + serializedCredentials->secret_key_length_;
-        serializedCredentials->session_token_length_ = session_token_len;
+        serializedCredentials->session_token_length_ = (uint32_t)session_token_len;
         serializedCredentials->expiration_seconds_ = expiration_seconds;
 
         char *pCurPtr = pBuffer + serializedCredentials->access_key_offset_;
@@ -161,7 +166,7 @@ public:
         assert(pCurPtr <= pBuffer + size);
 
         *ppBuffer = reinterpret_cast<uint8_t *>(pBuffer);
-        *pSize = size;
+        *pSize = (uint32_t)size;
     }
 
     static void deSerialize(uint8_t *pBuffer, uint32_t size, Credentials &credentials) {
@@ -200,7 +205,8 @@ class CredentialProvider {
 public:
     void getCredentials(Credentials& credentials);
     void getUpdatedCredentials(Credentials& credentials);
-
+    virtual ~CredentialProvider() {}
+    
 protected:
     CredentialProvider();
 

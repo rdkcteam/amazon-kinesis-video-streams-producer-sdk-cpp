@@ -1,11 +1,20 @@
 
-cmake_minimum_required(VERSION 3.2)
+cmake_minimum_required(VERSION 2.8.7)
 set(CMAKE_CXX_STANDARD 14)
 project(kinesisvideosink)
 
 set(EXEC_NAME kinesisvideosink)
 
-set(CMAKE_CXX_STANDARD 14)
+#set(CMAKE_CXX_STANDARD 14)
+if (CMAKE_VERSION VERSION_LESS "3.1")
+  message("CMAKE ${CMAKE_CXX_COMPILER_ID}")
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set (CMAKE_CXX_FLAGS "-std=gnu++14 ${CMAKE_CXX_FLAGS}")
+  endif ()
+else ()
+  set (CMAKE_CXX_STANDARD 14)
+endif ()
+
 
 if (DEFINED ENV{KINESIS_VIDEO_STREAMS_PRODUCER_SDK_SOURCE_DIR})
     set(KINESIS_VIDEO_STREAMS_PRODUCER_SDK_SOURCE_DIR $ENV{KINESIS_VIDEO_STREAMS_PRODUCER_SDK_SOURCE_DIR})
@@ -66,7 +75,8 @@ endif()
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads)
 
-set(EXE_LIBRARIES Threads::Threads ${CMAKE_DL_LIBS})
+#set(EXE_LIBRARIES Threads::Threads ${CMAKE_DL_LIBS})
+set(EXE_LIBRARIES "${CMAKE_THREAD_LIBS_INIT}" ${CMAKE_DL_LIBS})
 
 if (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin" AND NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
     #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ldl -lrt -lpthread")

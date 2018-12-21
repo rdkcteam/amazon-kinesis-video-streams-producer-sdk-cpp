@@ -11,6 +11,7 @@
 #include "StreamCallbackProvider.h"
 #include "ThreadSafeMap.h"
 #include "OngoingStreamState.h"
+#include "GetTime.h"
 
 #include "json/json.h"
 
@@ -37,7 +38,9 @@ const std::string DEFAULT_USER_AGENT_NAME = "AWS-SDK-KVS";
 
 namespace com { namespace amazonaws { namespace kinesis { namespace video {
 
-class DefaultCallbackProvider : public CallbackProvider {
+#define CURL_CLOSE_HANDLE_DELAY_IN_MILLIS 10
+
+class DefaultCallbackProvider : public CallbackProvider, public ResponseAcceptor {
 public:
     explicit DefaultCallbackProvider(
             std::unique_ptr <ClientCallbackProvider> client_callback_provider,
@@ -46,9 +49,15 @@ public:
                 std::make_unique<EmptyCredentialProvider>(),
             const std::string &region = DEFAULT_AWS_REGION,
             const std::string &control_plane_uri = "",
-            const std::string &user_agent_name = DEFAULT_USER_AGENT_NAME);
+            const std::string &user_agent_name = "",
+            const std::string &custom_user_agent = "");
 
     virtual ~DefaultCallbackProvider();
+
+    /**
+     * Response setter override
+     */
+    void setResponse(STREAM_HANDLE stream_handle, std::shared_ptr<Response> response) override;
 
     /**
      * Stream is being freed
@@ -176,6 +185,11 @@ public:
     StreamConnectionStaleFunc getStreamConnectionStaleCallback() override;
 
     /**
+     * @copydoc com::amazonaws::kinesis::video::CallbackProvider::getBufferDurationOverflowPressureCallback()
+     */
+    BufferDurationOverflowPressureFunc getBufferDurationOverflowPressureCallback() override;
+
+    /**
      * Gets the current time in 100ns from some timestamp.
      *
      * @param 1 UINT64 - Custom handle passed by the caller.
@@ -241,6 +255,19 @@ public:
                                             UINT64 timecode);
 
     /**
+     * Reports temporal buffer pressure.
+     *
+     * @param 1 UINT64 - Custom handle passed by the caller.
+     * @param 2 STREAM_HANDLE - Reporting for this stream.
+     * @param 3 UINT64 - Remaining duration in hundreds of nanos.
+     *
+     * @return Status of the callback
+     */
+    static STATUS bufferDurationOverflowPressureHandler(UINT64 custom_data,
+                                                        STREAM_HANDLE stream_handle,
+                                                        UINT64 remaining_duration);
+
+    /**
      * Reports a dropped fragment for the stream.
      *
      * @param 1 UINT64 - Custom handle passed by the caller.
@@ -282,12 +309,14 @@ public:
      *
      * @param 1 UINT64 - Custom handle passed by the caller.
      * @param 2 STREAM_HANDLE - The stream to report for.
-     * @param 3 PFragmentAck - The constructed fragment ack.
+     * @param 3 UPLOAD_HANDLE - the current stream upload handle.
+     * @param 4 PFragmentAck - The constructed fragment ack.
      *
      * @return Status of the callback
     */
     static STATUS fragmentAckReceivedHandler(UINT64 custom_data,
                                              STREAM_HANDLE stream_handle,
+                                             UPLOAD_HANDLE upload_handle,
                                              PFragmentAck fragment_ack);
 
 
@@ -439,12 +468,13 @@ public:
      *
      * @param custom_data Custom handle passed by the caller (this class)
      * @param STREAM_HANDLE stream handle for the stream
+     * @param UPLOAD_HANDLE the current stream upload handle.
      * @param UINT64 errored fragment timecode
      * @param STATUS status code of the failure
      * @return Status of the callback
      */
     static STATUS
-    streamErrorHandler(UINT64 custom_data, STREAM_HANDLE stream_handle, UINT64 fragment_timecode, STATUS status);
+    streamErrorHandler(UINT64 custom_data, STREAM_HANDLE stream_handle, UPLOAD_HANDLE upload_handle, UINT64 fragment_timecode, STATUS status);
 
     /**
      * Gets triggered when data becomes available
@@ -563,6 +593,11 @@ protected:
     std::recursive_mutex active_streams_mutex_;
 
     /**
+     * Mutex needed for locking the ongoing responses for atomic operations
+     */
+    std::recursive_mutex ongoing_responses_mutex_;
+
+    /**
      * Whether to debug dump to a file
      */
     bool debug_dump_file_;
@@ -582,6 +617,17 @@ protected:
      *
      */
     ThreadSafeMap<UPLOAD_HANDLE, std::shared_ptr<OngoingStreamState>> active_streams_;
+
+    /**
+     * A map which holds a reference mapping of the stream handle to an ongoing response object.
+     */
+    ThreadSafeMap<STREAM_HANDLE, std::shared_ptr<Response>> ongoing_responses_;
+
+    /**
+     * Sleep until given time based on current time provided in callback
+     * @param time_point
+     */
+    static void sleepUntilWithTimeCallback(const std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds>& time_point);
 };
 
 } // namespace video

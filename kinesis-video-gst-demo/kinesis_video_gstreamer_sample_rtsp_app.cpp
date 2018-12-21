@@ -36,13 +36,13 @@ LOGGER_TAG("com.amazonaws.kinesis.video.gstreamer");
 #define DEFAULT_TIMECODE_SCALE_MILLISECONDS 1
 #define DEFAULT_KEY_FRAME_FRAGMENTATION TRUE
 #define DEFAULT_FRAME_TIMECODES TRUE
-#define DEFAULT_ABSOLUTE_FRAGMENT_TIMES TRUE
+#define DEFAULT_ABSOLUTE_FRAGMENT_TIMES FALSE
 #define DEFAULT_FRAGMENT_ACKS TRUE
 #define DEFAULT_RESTART_ON_ERROR TRUE
 #define DEFAULT_RECALCULATE_METRICS TRUE
 #define DEFAULT_STREAM_FRAMERATE 25
 #define DEFAULT_AVG_BANDWIDTH_BPS (4 * 1024 * 1024)
-#define DEFAULT_BUFFER_DURATION_SECONDS 180
+#define DEFAULT_BUFFER_DURATION_SECONDS 120
 #define DEFAULT_REPLAY_DURATION_SECONDS 40
 #define DEFAULT_CONNECTION_STALENESS_SECONDS 60
 #define DEFAULT_CODEC_ID "V_MPEG4/ISO/AVC"
@@ -92,7 +92,7 @@ namespace com {
                                                  UINT64 last_buffering_ack);
 
                     static STATUS
-                    streamErrorReportHandler(UINT64 custom_data, STREAM_HANDLE stream_handle, UINT64 errored_timecode,
+                    streamErrorReportHandler(UINT64 custom_data, STREAM_HANDLE stream_handle, UPLOAD_HANDLE upload_handle, UINT64 errored_timecode,
                                              STATUS status_code);
 
                     static STATUS
@@ -113,7 +113,7 @@ namespace com {
 
                         // Update only the expiration
                         auto now_time = std::chrono::duration_cast<std::chrono::seconds>(
-                                std::chrono::system_clock::now().time_since_epoch());
+                                systemCurrentTime().time_since_epoch());
                         auto expiration_seconds = now_time + ROTATION_PERIOD;
                         credentials.setExpiration(std::chrono::seconds(expiration_seconds.count()));
                         LOG_INFO("New credentials expiration is " << credentials.getExpiration().count());
@@ -124,8 +124,8 @@ namespace com {
                 public:
                     device_info_t getDeviceInfo() override {
                         auto device_info = DefaultDeviceInfoProvider::getDeviceInfo();
-                        // Set the storage size to 512MB
-                        device_info.storageInfo.storageSize = 512 * 1024 * 1024;
+                        // Set the storage size to 128MB
+                        device_info.storageInfo.storageSize = 128 * 1024 * 1024;
                         return device_info;
                     }
                 };
@@ -146,7 +146,7 @@ namespace com {
 
                 STATUS
                 SampleStreamCallbackProvider::streamErrorReportHandler(UINT64 custom_data, STREAM_HANDLE stream_handle,
-                                                                       UINT64 errored_timecode, STATUS status_code) {
+                                                                       UPLOAD_HANDLE upload_handle, UINT64 errored_timecode, STATUS status_code) {
                     LOG_ERROR("Reporting stream error. Errored timecode: " << errored_timecode << " Status: "
                                                                            << status_code);
                     return STATUS_SUCCESS;
@@ -184,6 +184,7 @@ void create_kinesis_video_frame(Frame *frame, const nanoseconds &pts, const nano
     frame->duration = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     frame->size = static_cast<UINT32>(len);
     frame->frameData = reinterpret_cast<PBYTE>(data);
+    frame->trackId = DEFAULT_TRACK_ID;
 }
 
 bool put_frame(shared_ptr<KinesisVideoStream> kinesis_video_stream, void *data, size_t len, const nanoseconds &pts,
@@ -218,19 +219,11 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
     bool delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
     FRAME_FLAGS kinesis_video_flags;
 
-    if (GST_BUFFER_PTS_IS_VALID(buffer)) {
-         buffer->dts = buffer->pts;
-    }
-    else {
-         buffer->pts = buffer->dts;
-    }
-
     if (!delta) {
         kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
     } else {
         kinesis_video_flags = FRAME_FLAG_NONE;
     }
-    LOG_INFO("kinesis_video_flags=" << kinesis_video_flags << ", pts=" << buffer->pts << ", dts=" << buffer->dts);
 
     if (false == put_frame(data->kinesis_video_stream, frame_data, buffer_size, std::chrono::nanoseconds(buffer->pts),
                            std::chrono::nanoseconds(buffer->dts), kinesis_video_flags)) {
@@ -355,7 +348,7 @@ int gstreamer_init(int argc, char *argv[]) {
 
     if (argc < 3) {
         LOG_ERROR(
-                "Usage: AWS_ACCESS_KEY_ID=SAMPLEKEY AWS_SECRET_ACCESS_KEY=SAMPLESECRET ./kinesis_video_gstreamer_sample_app rtsp-url my-stream-name");
+                "Usage: AWS_ACCESS_KEY_ID=SAMPLEKEY AWS_SECRET_ACCESS_KEY=SAMPLESECRET ./kinesis_video_gstreamer_sample_rtsp_app rtsp-url my-stream-name");
         return 1;
     }
 

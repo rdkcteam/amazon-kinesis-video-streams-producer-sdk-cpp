@@ -171,7 +171,8 @@ STATUS describeStreamResult(PKinesisVideoStream pKinesisVideoStream, SERVICE_CAL
         CHK(pStreamDescription->version <= STREAM_DESCRIPTION_CURRENT_VERSION, STATUS_INVALID_STREAM_DESCRIPTION_VERSION);
 
         // Check and store the ARN
-        CHK(pStreamDescription->streamArn != NULL && STRNLEN(pStreamDescription->streamArn, MAX_ARN_LEN) < MAX_ARN_LEN, STATUS_INVALID_DESCRIBE_STREAM_RESPONSE);
+        CHK(pStreamDescription->streamArn != NULL &&
+            STRNLEN(pStreamDescription->streamArn, MAX_ARN_LEN + 1) <= MAX_ARN_LEN, STATUS_INVALID_DESCRIBE_STREAM_RESPONSE);
         STRNCPY(pKinesisVideoStream->base.arn, pStreamDescription->streamArn, MAX_ARN_LEN);
         pKinesisVideoStream->base.arn[MAX_ARN_LEN] = '\0';
 
@@ -232,7 +233,8 @@ STATUS createStreamResult(PKinesisVideoStream pKinesisVideoStream, SERVICE_CALL_
     // store the info
     if (callResult == SERVICE_CALL_RESULT_OK) {
         // Should have the stream arn
-        CHK(streamArn != NULL && STRNLEN(streamArn, MAX_ARN_LEN) < MAX_ARN_LEN, STATUS_INVALID_CREATE_STREAM_RESPONSE);
+        CHK(streamArn != NULL &&
+            STRNLEN(streamArn, MAX_ARN_LEN + 1) <= MAX_ARN_LEN, STATUS_INVALID_CREATE_STREAM_RESPONSE);
         STRNCPY(pKinesisVideoStream->base.arn, streamArn, MAX_ARN_LEN);
         pKinesisVideoStream->base.arn[MAX_ARN_LEN] = '\0';
     }
@@ -368,7 +370,7 @@ STATUS getStreamingEndpointResult(PKinesisVideoStream pKinesisVideoStream, SERVI
     // store the info
     if (callResult == SERVICE_CALL_RESULT_OK) {
         // We are good now to proceed - store the data and set the state
-        CHK(STRNLEN(pEndpoint, MAX_URI_CHAR_LEN) < MAX_URI_CHAR_LEN, STATUS_INVALID_URI_LEN);
+        CHK(STRNLEN(pEndpoint, MAX_URI_CHAR_LEN + 1) <= MAX_URI_CHAR_LEN, STATUS_INVALID_URI_LEN);
         STRNCPY(pKinesisVideoStream->streamingEndpoint, pEndpoint, MAX_URI_CHAR_LEN);
         pKinesisVideoStream->streamingEndpoint[MAX_URI_CHAR_LEN] = '\0';
     }
@@ -581,6 +583,12 @@ CleanUp:
         pKinesisVideoClient->clientCallbacks.unlockMutexFn(pKinesisVideoClient->clientCallbacks.customData, pKinesisVideoStream->base.lock);
     }
 
+    if (pKinesisVideoStream->streamState == STREAM_STATE_STOPPED &&
+        IS_OFFLINE_STREAMING_MODE(pKinesisVideoStream->streamInfo.streamCaps.streamingType)) {
+        pKinesisVideoClient->clientCallbacks.signalConditionVariableFn(pKinesisVideoClient->clientCallbacks.customData,
+                                                                       pKinesisVideoStream->bufferAvailabilityCondition);
+    }
+
     LEAVES();
     return retStatus;
 }
@@ -653,7 +661,8 @@ STATUS streamFragmentAckEvent(PKinesisVideoStream pKinesisVideoStream, UPLOAD_HA
     }
 
     // Quick check if we have the timestamp in the view window and if not then bail out early
-    CHK_STATUS(contentViewTimestampInRange(pKinesisVideoStream->pView, timestamp, &inView));
+    CHK_STATUS(contentViewTimestampInRange(pKinesisVideoStream->pView, timestamp, TRUE, &inView));
+
 
     // NOTE: IMPORTANT: For the Error Ack case we will still need to process the ACK. The side-effect of
     // processing the Error Ack is the connection termination which is needed as the higher-level clients like
@@ -703,6 +712,7 @@ CleanUp:
         if (pKinesisVideoClient->clientCallbacks.fragmentAckReceivedFn != NULL) {
             pKinesisVideoClient->clientCallbacks.fragmentAckReceivedFn(pKinesisVideoClient->clientCallbacks.customData,
                                                                        TO_STREAM_HANDLE(pKinesisVideoStream),
+                                                                       uploadHandle,
                                                                        pFragmentAck);
         }
 

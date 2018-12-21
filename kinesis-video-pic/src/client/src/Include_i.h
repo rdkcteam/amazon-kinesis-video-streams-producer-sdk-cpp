@@ -120,9 +120,10 @@ typedef __KinesisVideoBase* PKinesisVideoBase;
 #define FILE_BASED_HEAP_FLAGS       (FLAGS_USE_AIV_HEAP | FLAGS_USE_HYBRID_FILE_HEAP)
 
 /**
- * Defines the full tag structure length when the pointers to the strings are allocated after the struct
+ * Defines the full tag structure length when the pointers to the strings are allocated after the
+ * main struct. We will add 2 for NULL terminators
  */
-#define TAG_FULL_LENGTH             (SIZEOF(Tag) + (MAX_TAG_NAME_LEN + MAX_TAG_VALUE_LEN) * SIZEOF(CHAR))
+#define TAG_FULL_LENGTH             (SIZEOF(Tag) + (MAX_TAG_NAME_LEN + MAX_TAG_VALUE_LEN + 2) * SIZEOF(CHAR))
 
 /**
  * Calculates the next service call retry time
@@ -282,6 +283,11 @@ VOID defaultLockMutex(UINT64, MUTEX);
 VOID defaultUnlockMutex(UINT64, MUTEX);
 BOOL defaultTryLockMutex(UINT64, MUTEX);
 VOID defaultFreeMutex(UINT64, MUTEX);
+CVAR defaultCreateConditionVariable(UINT64);
+STATUS defaultSignalConditionVariable(UINT64, CVAR);
+STATUS defaultBroadcastConditionVariable(UINT64, CVAR);
+STATUS defaultWaitConditionVariable(UINT64, CVAR, MUTEX, UINT64);
+VOID defaultFreeConditionVariable(UINT64, CVAR);
 STATUS defaultStreamReady(UINT64, STREAM_HANDLE);
 STATUS defaultEndOfStream(UINT64, STREAM_HANDLE, UPLOAD_HANDLE);
 STATUS defaultClientReady(UINT64, CLIENT_HANDLE);

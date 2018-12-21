@@ -100,14 +100,16 @@ STATUS createKinesisVideoClient(PDeviceInfo pDeviceInfo, PClientCallbacks pClien
         pKinesisVideoClient->deviceInfo.tags[i].version = pDeviceInfo->tags[i].version;
         // Fix-up the pointers first
         pKinesisVideoClient->deviceInfo.tags[i].name = pCurPnt;
-        pCurPnt += MAX_TAG_NAME_LEN;
+        pCurPnt += MAX_TAG_NAME_LEN + 1;
 
         pKinesisVideoClient->deviceInfo.tags[i].value = pCurPnt;
-        pCurPnt += MAX_TAG_VALUE_LEN;
+        pCurPnt += MAX_TAG_VALUE_LEN + 1;
 
         // Copy the strings
         STRNCPY(pKinesisVideoClient->deviceInfo.tags[i].name, pDeviceInfo->tags[i].name, MAX_TAG_NAME_LEN);
+        pKinesisVideoClient->deviceInfo.tags[i].name[MAX_TAG_NAME_LEN] = '\0';
         STRNCPY(pKinesisVideoClient->deviceInfo.tags[i].value, pDeviceInfo->tags[i].value, MAX_TAG_VALUE_LEN);
+        pKinesisVideoClient->deviceInfo.tags[i].value[MAX_TAG_VALUE_LEN] = '\0';
     }
 
     // Create the lock
@@ -218,7 +220,7 @@ STATUS getKinesisVideoMetrics(CLIENT_HANDLE clientHandle, PClientMetrics pKinesi
     UINT32 i, viewAllocationSize;
     PKinesisVideoClient pKinesisVideoClient = FROM_CLIENT_HANDLE(clientHandle);
 
-    DLOGV("Get the memory metrics size.");
+    DLOGI("Get the memory metrics size.");
 
     CHK(pKinesisVideoClient != NULL && pKinesisVideoMetrics != NULL, STATUS_NULL_ARG);
     CHK(pKinesisVideoMetrics->version <= CLIENT_METRICS_CURRENT_VERSION, STATUS_INVALID_CLIENT_METRICS_VERSION);
@@ -257,7 +259,7 @@ STATUS getKinesisVideoStreamMetrics(STREAM_HANDLE streamHandle, PStreamMetrics p
     STATUS retStatus = STATUS_SUCCESS;
     PKinesisVideoStream pKinesisVideoStream = FROM_STREAM_HANDLE(streamHandle);
 
-    DLOGV("Get stream metrics for Stream %016" PRIx64 ".", streamHandle);
+    DLOGI("Get stream metrics for Stream %016" PRIx64 ".", streamHandle);
 
     CHK(pKinesisVideoStream != NULL && pKinesisVideoStream->pKinesisVideoClient != NULL && pStreamMetrics != NULL, STATUS_NULL_ARG);
 
@@ -374,6 +376,7 @@ CleanUp:
 STATUS putKinesisVideoFrame(STREAM_HANDLE streamHandle, PFrame pFrame)
 {
     STATUS retStatus = STATUS_SUCCESS;
+    UINT32 i;
     PKinesisVideoStream pKinesisVideoStream = FROM_STREAM_HANDLE(streamHandle);
 
     DLOGS("Putting frame into an Kinesis Video stream.");
@@ -415,17 +418,17 @@ CleanUp:
  * NOTE: Currently, the format change should happen while it's not streaming.
  */
 STATUS kinesisVideoStreamFormatChanged(STREAM_HANDLE streamHandle, UINT32 codecPrivateDataSize,
-                                                  PBYTE codecPrivateData)
+                                                  PBYTE codecPrivateData, UINT64 trackId)
 {
     STATUS retStatus = STATUS_SUCCESS;
     PKinesisVideoStream pKinesisVideoStream = FROM_STREAM_HANDLE(streamHandle);
 
-    DLOGV("Stream format changed.");
+    DLOGI("Stream format changed.");
 
     CHK(pKinesisVideoStream != NULL && pKinesisVideoStream->pKinesisVideoClient != NULL, STATUS_NULL_ARG);
 
     // Process and store the result
-    CHK_STATUS(streamFormatChanged(pKinesisVideoStream, codecPrivateDataSize, codecPrivateData));
+    CHK_STATUS(streamFormatChanged(pKinesisVideoStream, codecPrivateDataSize, codecPrivateData, trackId));
 
 CleanUp:
 
@@ -698,6 +701,22 @@ CleanUp:
     return retStatus;
 }
 
+/**
+ * Kinesis Video stream get streamInfo from STREAM_HANDLE
+ */
+STATUS kinesisVideoStreamGetStreamInfo(STREAM_HANDLE stream_handle, PPStreamInfo ppStreamInfo) {
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKinesisVideoStream pKinesisVideoStream = FROM_STREAM_HANDLE(stream_handle);
+
+    CHK(pKinesisVideoStream != NULL && ppStreamInfo != NULL, STATUS_NULL_ARG);
+    *ppStreamInfo = &pKinesisVideoStream->streamInfo;
+
+CleanUp:
+    LEAVE();
+    return retStatus;
+}
+
 //////////////////////////////////////////////////////////
 // Internal functions
 //////////////////////////////////////////////////////////
@@ -713,6 +732,7 @@ VOID viewItemRemoved(PContentView pContentView, UINT64 customData, PViewItem pVi
     PKinesisVideoClient pKinesisVideoClient = NULL;
     BOOL streamLocked = FALSE;
     PUploadHandleInfo pUploadHandleInfo;
+    UPLOAD_HANDLE uploadHandle = INVALID_UPLOAD_HANDLE_VALUE;
 
     // Validate the input just in case
     CHK(pContentView != NULL && pViewItem != NULL && pKinesisVideoStream != NULL && pKinesisVideoStream->pKinesisVideoClient != NULL, STATUS_NULL_ARG);
@@ -726,6 +746,8 @@ VOID viewItemRemoved(PContentView pContentView, UINT64 customData, PViewItem pVi
     if (pViewItem->index != 0) {
         // Check if it's a session start and remove in a loop as there could be multiple terminations at the given index
         while (NULL != (pUploadHandleInfo = getStreamUploadInfoWithEndIndex(pKinesisVideoStream, pViewItem->index))) {
+            uploadHandle = pUploadHandleInfo->handle;
+
             // Remove the handle info from the queue
             deleteStreamUploadInfo(pKinesisVideoStream, pUploadHandleInfo);
 
@@ -735,6 +757,7 @@ VOID viewItemRemoved(PContentView pContentView, UINT64 customData, PViewItem pVi
                 pKinesisVideoClient->clientCallbacks.streamErrorReportFn(
                         pKinesisVideoClient->clientCallbacks.customData,
                         TO_STREAM_HANDLE(pKinesisVideoStream),
+                        uploadHandle,
                         pUploadHandleInfo->timestamp,
                         STATUS_PERSISTED_ACK_TIMEOUT);
             }
@@ -757,6 +780,7 @@ VOID viewItemRemoved(PContentView pContentView, UINT64 customData, PViewItem pVi
 
         switch (pKinesisVideoStream->streamInfo.streamCaps.streamingType) {
             case STREAMING_TYPE_REALTIME:
+            case STREAMING_TYPE_OFFLINE:
                 // The callback is optional so check if specified first
                 if (pKinesisVideoClient->clientCallbacks.droppedFrameReportFn != NULL) {
                     CHK_STATUS(pKinesisVideoClient->clientCallbacks.droppedFrameReportFn(
@@ -833,5 +857,5 @@ VOID createRandomName(PCHAR pName, UINT32 maxChars, GetRandomNumberFunc randFn, 
     }
 
     // Null terminate the string - we should still have plenty of buffer space
-    pName[maxChars] = '\0';    
+    pName[maxChars] = '\0';
 }

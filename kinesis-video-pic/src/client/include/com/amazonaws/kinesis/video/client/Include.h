@@ -170,6 +170,22 @@ extern "C" {
 #define STATUS_ACK_ERR_FRAGMENT_METADATA_LIMIT_REACHED                              STATUS_CLIENT_BASE + 0x00000075
 #define STATUS_BLOCKING_PUT_INTERRUPTED_STREAM_TERMINATED                           STATUS_CLIENT_BASE + 0x00000076
 #define STATUS_INVALID_METADATA_NAME                                                STATUS_CLIENT_BASE + 0x00000077
+#define STATUS_END_OF_FRAGMENT_FRAME_INVALID_STATE                                  STATUS_CLIENT_BASE + 0x00000078
+#define STATUS_TRACK_INFO_MISSING                                                   STATUS_CLIENT_BASE + 0x00000079
+#define STATUS_MAX_TRACK_COUNT_EXCEEDED                                             STATUS_CLIENT_BASE + 0x0000007a
+#define STATUS_OFFLINE_MODE_WITH_ZERO_RETENTION                                     STATUS_CLIENT_BASE + 0x0000007b
+
+#define IS_RECOVERABLE_ERROR(error)     ((error) == STATUS_ACK_ERR_INVALID_MKV_DATA ||          \
+                                        (error) == STATUS_ACK_ERR_FRAGMENT_ARCHIVAL_ERROR ||    \
+                                        (error) == STATUS_INVALID_ACK_KEY_START ||              \
+                                        (error) == STATUS_INVALID_ACK_DUPLICATE_KEY_NAME ||     \
+                                        (error) == STATUS_INVALID_ACK_INVALID_VALUE_START ||    \
+                                        (error) == STATUS_INVALID_ACK_INVALID_VALUE_END ||      \
+                                        (error) == STATUS_ACK_TIMESTAMP_NOT_IN_VIEW_WINDOW ||   \
+                                        (error) == STATUS_ACK_ERR_FRAGMENT_DURATION_REACHED)
+
+#define IS_RETRIABLE_ERROR(error)       ((error) == STATUS_DESCRIBE_STREAM_CALL_FAILED ||        \
+                                        (error) == STATUS_GET_STREAMING_ENDPOINT_CALL_FAILED)
 
 ////////////////////////////////////////////////////
 // Main defines
@@ -317,6 +333,13 @@ extern "C" {
 #define STORAGE_PRESSURE_NOTIFICATION_THRESHOLD     5
 
 /**
+ * Remaining buffer duration pressure notification threshold in percents.
+ * The client application will be notified if the buffer duration availability
+ * falls below this percentage.
+ */
+#define BUFFER_DURATION_PRESSURE_NOTIFICATION_THRESHOLD     5
+
+/**
  * Default device name string length
  */
 #define DEFAULT_DEVICE_NAME_LEN                     16
@@ -360,6 +383,11 @@ extern "C" {
  * Retention period sentinel value indicating no retention is needed
  */
 #define RETENTION_PERIOD_SENTINEL                   0
+
+/**
+ * Max number of tracks allowed per stream
+ */
+#define MAX_SUPPORTED_TRACK_COUNT_PER_STREAM                  3
 
 /**
  * Current versions for the public structs
@@ -468,6 +496,11 @@ typedef enum {
     // Offline upload mode
     STREAMING_TYPE_OFFLINE,
 } STREAMING_TYPE;
+
+/**
+ * Whether the streaming mode is offline
+ */
+#define IS_OFFLINE_STREAMING_MODE(mode)     ((mode) == STREAMING_TYPE_OFFLINE)
 
 /**
  * Device storage types
@@ -703,7 +736,7 @@ struct __FragmentAck {
     UINT64 timestamp;
 
     // Fragment sequence number
-    CHAR sequenceNumber[MAX_FRAGMENT_SEQUENCE_NUMBER];
+    CHAR sequenceNumber[MAX_FRAGMENT_SEQUENCE_NUMBER + 1];
 
     // Reporting the ack error type. For non-error acks this is ignored but should be set to SERVICE_CALL_RESULT_OK
     SERVICE_CALL_RESULT result;
@@ -762,8 +795,8 @@ struct __StreamCaps {
     // Streaming type
     STREAMING_TYPE streamingType;
 
-    // Stream content type - nul terminated.
-    CHAR contentType[MAX_CONTENT_TYPE_LEN];
+    // Stream content type - null terminated.
+    CHAR contentType[MAX_CONTENT_TYPE_LEN + 1];
 
     // Whether the bitrate can change in mid-stream.
     BOOL adaptive;
@@ -790,13 +823,8 @@ struct __StreamCaps {
     BOOL recoverOnError;
 
     // Specify the NALs adaptation flags as defined in NAL_ADAPTATION_FLAGS enumeration
+    // The adaptation will be applied to all tracks
     UINT32 nalAdaptationFlags;
-
-    // Codec ID of the stream. Null terminated.
-    CHAR codecId[MKV_MAX_CODEC_ID_LEN];
-
-    // Human readable track name. Null terminated.
-    CHAR trackName[MKV_MAX_TRACK_NAME_LEN];
 
     // Average stream bandwidth requirement in bits per second
     UINT32 avgBandwidthBps;
@@ -831,11 +859,11 @@ struct __StreamCaps {
     // Whether to recalculate metrics at runtime with slight increasing performance hit.
     BOOL recalculateMetrics;
 
-    // Size of the codec private data in bytes. Can be 0 if no CPD is used.
-    UINT32 codecPrivateDataSize;
+    // Array of TrackInfo containing track metadata
+    PTrackInfo trackInfoList;
 
-    // Codec private data. Can be NULL if no CPD is used.
-    PBYTE codecPrivateData;
+    // Number of TrackInfo in trackInfoList
+    UINT32 trackInfoCount;
 };
 
 typedef __StreamCaps* PStreamCaps;
@@ -850,7 +878,7 @@ struct __StreamInfo {
 
     // Stream name - human readable. Null terminated.
     // Should be unique per AWS account.
-    CHAR name[MAX_STREAM_NAME_LEN];
+    CHAR name[MAX_STREAM_NAME_LEN + 1];
 
     // Number of tags associated with the stream
     UINT32 tagCount;
@@ -863,13 +891,14 @@ struct __StreamInfo {
     UINT64 retention;
 
     // KMS key id ARN
-    CHAR kmsKeyId[MAX_ARN_LEN];
+    CHAR kmsKeyId[MAX_ARN_LEN + 1];
 
     // Stream capabilities
     StreamCaps streamCaps;
 };
 
 typedef __StreamInfo* PStreamInfo;
+typedef __StreamInfo** PPStreamInfo;
 
 /**
  * Storage info declaration
@@ -889,7 +918,7 @@ struct __StorageInfo {
     UINT32 spillRatio;
 
     // File location in case of the file based storage
-    CHAR rootDirectory[MAX_PATH_LEN];
+    CHAR rootDirectory[MAX_PATH_LEN + 1];
 };
 
 typedef __StorageInfo* PStorageInfo;
@@ -904,7 +933,7 @@ struct __DeviceInfo {
 
     // Device name - human readable. Null terminated.
     // Should be unique per AWS account.
-    CHAR name[MAX_DEVICE_NAME_LEN];
+    CHAR name[MAX_DEVICE_NAME_LEN + 1];
 
     // Number of tags associated with the device.
     UINT32 tagCount;
@@ -1032,20 +1061,20 @@ struct __StreamDescription {
 
     // Device name - human readable. Null terminated.
     // Should be unique per AWS account.
-    CHAR deviceName[MAX_DEVICE_NAME_LEN];
+    CHAR deviceName[MAX_DEVICE_NAME_LEN + 1];
 
     // Stream name - human readable. Null terminated.
     // Should be unique per AWS account.
-    CHAR streamName[MAX_STREAM_NAME_LEN];
+    CHAR streamName[MAX_STREAM_NAME_LEN + 1];
 
     // Stream content type - nul terminated.
-    CHAR contentType[MAX_CONTENT_TYPE_LEN];
+    CHAR contentType[MAX_CONTENT_TYPE_LEN + 1];
 
     // Update version.
-    CHAR updateVersion[MAX_UPDATE_VERSION_LEN];
+    CHAR updateVersion[MAX_UPDATE_VERSION_LEN + 1];
 
     // Stream ARN
-    CHAR streamArn[MAX_ARN_LEN];
+    CHAR streamArn[MAX_ARN_LEN + 1];
 
     // Current stream status
     STREAM_STATUS streamStatus;
@@ -1170,6 +1199,19 @@ typedef STATUS (*StorageOverflowPressureFunc)(UINT64,
                                               UINT64);
 
 /**
+ * Reports temporal buffer pressure.
+ *
+ * @param 1 UINT64 - Custom handle passed by the caller.
+ * @param 2 STREAM_HANDLE - Reporting for this stream.
+ * @param 3 UINT64 - Remaining duration in hundreds of nanos.
+ *
+ * @return Status of the callback
+ */
+typedef STATUS (*BufferDurationOverflowPressureFunc)(UINT64,
+                                                     STREAM_HANDLE,
+                                                     UINT64);
+
+/**
  * Reports stream latency excess.
  *
  * @param 1 UINT64 - Custom handle passed by the caller.
@@ -1228,13 +1270,15 @@ typedef STATUS (*DroppedFragmentReportFunc)(UINT64,
  *
  * @param 1 UINT64 - Custom handle passed by the caller.
  * @param 2 STREAM_HANDLE - The stream to report for.
- * @param 3 UINT64 - The timecode of the errored fragment in 100ns.
- * @param 4 STATUS - The status code of the error to report.
+ * @param 3 UPLOAD_HANDLE - Client upload handle.
+ * @param 4 UINT64 - The timecode of the errored fragment in 100ns.
+ * @param 5 STATUS - The status code of the error to report.
  *
  * @return Status of the callback
  */
 typedef STATUS (*StreamErrorReportFunc)(UINT64,
                                         STREAM_HANDLE,
+                                        UPLOAD_HANDLE,
                                         UINT64,
                                         STATUS);
 
@@ -1243,12 +1287,14 @@ typedef STATUS (*StreamErrorReportFunc)(UINT64,
  *
  * @param 1 UINT64 - Custom handle passed by the caller.
  * @param 2 STREAM_HANDLE - The stream to report for.
- * @param 3 PFragmentAck - The constructed fragment ack.
+ * @param 3 UPLOAD_HANDLE - Client upload handle.
+ * @param 4 PFragmentAck - The constructed fragment ack.
  *
  * @return Status of the callback
  */
 typedef STATUS (*FragmentAckReceivedFunc)(UINT64,
                                           STREAM_HANDLE,
+                                          UPLOAD_HANDLE,
                                           PFragmentAck);
 
 ///////////////////////////////////////////////////////////////
@@ -1309,7 +1355,7 @@ typedef STATUS (*StreamDataAvailableFunc)(UINT64,
                                           UINT64);
 
 ///////////////////////////////////////////////////////////////
-// Synchronization callbacks
+// Synchronization callbacks - Locking
 ///////////////////////////////////////////////////////////////
 /**
  * Creates a mutex
@@ -1342,7 +1388,6 @@ typedef VOID (*LockMutexFunc)(UINT64,
 typedef VOID (*UnlockMutexFunc)(UINT64,
                                 MUTEX);
 
-
 /**
  * Try to lock the mutex
  *
@@ -1362,6 +1407,60 @@ typedef BOOL (*TryLockMutexFunc)(UINT64,
  */
 typedef VOID (*FreeMutexFunc)(UINT64,
                               MUTEX);
+
+///////////////////////////////////////////////////////////////
+// Synchronization callbacks - Conditional variables
+///////////////////////////////////////////////////////////////
+/**
+ * Creates a condition variable
+ *
+ * @param 1 UINT64 - Custom handle passed by the caller.
+ *
+ * @return CVAR object to use
+ */
+typedef CVAR (*CreateConditionVariableFunc)(UINT64);
+
+/**
+ * Signals a single listener for a condition variable
+ *
+ * @param 1 UINT64 - Custom handle passed by the caller.
+ * @param 2 CVAR - The conditional variable to signal.
+ *
+ * @return STATUS code of the operations
+ */
+typedef STATUS (*SignalConditionVariableFunc)(UINT64, CVAR);
+
+/**
+ * Broadcasts to all listeners for a condition variable
+ *
+ * @param 1 UINT64 - Custom handle passed by the caller.
+ * @param 2 CVAR - The conditional variable to signal.
+ *
+ * @return STATUS code of the operations
+ */
+typedef STATUS (*BroadcastConditionVariableFunc)(UINT64, CVAR);
+
+/**
+ * Waits for a condition variable to become signalled
+ *
+ * @param 1 UINT64 - Custom handle passed by the caller.
+ * @param 2 CVAR - The conditional variable to wait for until signalled.
+ * @param 3 MUTEX - The lock to use for signalling.
+ * @param 4 UINT64 - The timeout to use. INFINITE_TIME_VALUE will wait infinitely for the signal.
+ *
+ * @return STATUS code of the operations
+ */
+typedef STATUS (*WaitConditionVariableFunc)(UINT64, CVAR, MUTEX, UINT64);
+
+/**
+ * Frees a condition variable
+ *
+ * @param 1 UINT64 - Custom handle passed by the caller.
+ * @param 2 CVAR - The conditional variable to free.
+ *
+ * @return STATUS code of the operations
+ */
+typedef VOID (*FreeConditionVariableFunc)(UINT64, CVAR);
 
 ///////////////////////////////////////////////////////////////
 // Pseudo-random number generator callbacks
@@ -1538,11 +1637,17 @@ struct __ClientCallbacks {
     UnlockMutexFunc unlockMutexFn;
     TryLockMutexFunc tryLockMutexFn;
     FreeMutexFunc freeMutexFn;
+    CreateConditionVariableFunc createConditionVariableFn;
+    SignalConditionVariableFunc signalConditionVariableFn;
+    BroadcastConditionVariableFunc broadcastConditionVariableFn;
+    WaitConditionVariableFunc waitConditionVariableFn;
+    FreeConditionVariableFunc freeConditionVariableFn;
     GetDeviceCertificateFunc getDeviceCertificateFn;
     GetSecurityTokenFunc getSecurityTokenFn;
     GetDeviceFingerprintFunc getDeviceFingerprintFn;
     StreamUnderflowReportFunc streamUnderflowReportFn;
     StorageOverflowPressureFunc storageOverflowPressureFn;
+    BufferDurationOverflowPressureFunc bufferDurationOverflowPressureFn;
     StreamLatencyPressureFunc streamLatencyPressureFn;
     StreamConnectionStaleFunc streamConnectionStaleFn;
     DroppedFrameReportFunc droppedFrameReportFn;
@@ -1812,10 +1917,11 @@ PUBLIC_API STATUS tagResourceResultEvent(UINT64, SERVICE_CALL_RESULT);
  * @param 1 STREAM_HANDLE - the stream handle.
  * @param 2 UINT32 - Codec Private Data size
  * @param 3 PBYTE - Codec Private Data bits.
+ * @param 4 UINT64 - Id of TrackInfo in trackInfoList
  *
  * @return Status of the function call.
  */
-PUBLIC_API STATUS kinesisVideoStreamFormatChanged(STREAM_HANDLE, UINT32, PBYTE);
+PUBLIC_API STATUS kinesisVideoStreamFormatChanged(STREAM_HANDLE, UINT32, PBYTE, UINT64);
 
 /**
  * Streaming has been terminated unexpectedly
@@ -1866,6 +1972,20 @@ PUBLIC_API STATUS kinesisVideoStreamParseFragmentAck(STREAM_HANDLE,
                                                      UPLOAD_HANDLE,
                                                      PCHAR,
                                                      UINT32);
+
+/**
+ * Get the streamInfo object belonging to stream with STREAM_HANDLE
+ *
+ * @param 1 STREAM_HANDLE - The stream handle to get the streamInfo
+ * @param 2 PStreamInfo - Returned streamInfo
+ *
+ * @return Status of the function call.
+ */
+PUBLIC_API STATUS kinesisVideoStreamGetStreamInfo(STREAM_HANDLE,
+                                                  PPStreamInfo);
+
+
+
 
 #pragma pack(pop, include)
 

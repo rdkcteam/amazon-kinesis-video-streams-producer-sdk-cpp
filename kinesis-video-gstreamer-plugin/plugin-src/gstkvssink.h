@@ -48,6 +48,7 @@
 #include <mutex>
 #include <queue>
 #include <condition_variable>
+#include <atomic>
 
 using namespace com::amazonaws::kinesis::video;
 
@@ -120,6 +121,7 @@ struct _GstKvsSink {
     gchar                       *credential_file_path;
     GstStructure                *iot_certificate;
     GstStructure                *stream_tags;
+    gulong                      file_start_time;
 
     unique_ptr<Credentials> credentials_;
     shared_ptr<CustomData> data;
@@ -147,12 +149,15 @@ typedef struct _CallbackStateMachine {
     _CallbackStateMachine(shared_ptr<CustomData> data, STREAM_HANDLE stream_handle);
 } CallbackStateMachine;
 
-typedef enum _StreamRecreationStatus {
-    STREAM_RECREATION_STATUS_NONE,
-    STREAM_RECREATION_STATUS_IN_PROGRESS
-} StreamRecreationStatus;
-
 typedef struct _CustomData {
+
+    _CustomData():
+            cpd(""),
+            stream_created(false),
+            stream_recreation_in_progress(false),
+            stream_status(STATUS_SUCCESS),
+            last_dts(0),
+            pts_base(0) {}
     unique_ptr<KinesisVideoProducer> kinesis_video_producer;
     ThreadSafeMap<STREAM_HANDLE, shared_ptr<KinesisVideoStream>> kinesis_video_stream_map;
     ThreadSafeMap<STREAM_HANDLE, shared_ptr<CallbackStateMachine>> callback_state_machine_map;
@@ -161,9 +166,12 @@ typedef struct _CustomData {
     bool stream_created = false;
 
     queue<STREAM_HANDLE> closing_stream_handles_queue;
-    StreamRecreationStatus stream_recreation_status = STREAM_RECREATION_STATUS_NONE;
+    atomic_bool stream_recreation_in_progress;
+    atomic_uint stream_status;
+
     std::mutex closing_stream_handles_queue_mtx;
-    std::mutex stream_recreation_status_mtx;
+    uint64_t last_dts;
+    uint64_t pts_base;
 } CustomData;
 
 #define ACCESS_KEY_ENV_VAR "AWS_ACCESS_KEY_ID"

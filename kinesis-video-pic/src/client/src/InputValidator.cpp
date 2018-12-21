@@ -57,6 +57,26 @@ STATUS validateClientCallbacks(PDeviceInfo pDeviceInfo, PClientCallbacks pClient
         pClientCallbacks->freeMutexFn = defaultFreeMutex;
     }
 
+    if (pClientCallbacks->createConditionVariableFn == NULL) {
+        pClientCallbacks->createConditionVariableFn = defaultCreateConditionVariable;
+    }
+
+    if (pClientCallbacks->signalConditionVariableFn == NULL) {
+        pClientCallbacks->signalConditionVariableFn = defaultSignalConditionVariable;
+    }
+
+    if (pClientCallbacks->broadcastConditionVariableFn == NULL) {
+        pClientCallbacks->broadcastConditionVariableFn = defaultBroadcastConditionVariable;
+    }
+
+    if (pClientCallbacks->waitConditionVariableFn == NULL) {
+        pClientCallbacks->waitConditionVariableFn = defaultWaitConditionVariable;
+    }
+
+    if (pClientCallbacks->freeConditionVariableFn == NULL) {
+        pClientCallbacks->freeConditionVariableFn = defaultFreeConditionVariable;
+    }
+
     if (pClientCallbacks->streamReadyFn == NULL) {
         pClientCallbacks->streamReadyFn = defaultStreamReady;
     }
@@ -107,8 +127,8 @@ STATUS validateDeviceInfo(PDeviceInfo pDeviceInfo)
                 pDeviceInfo->storageInfo.storageSize <= MAX_STORAGE_ALLOCATION_SIZE,
         STATUS_INVALID_STORAGE_SIZE);
     CHK(pDeviceInfo->storageInfo.spillRatio <= 100, STATUS_INVALID_SPILL_RATIO);
-    CHK(STRNLEN(pDeviceInfo->storageInfo.rootDirectory, MAX_PATH_LEN) < MAX_PATH_LEN, STATUS_INVALID_ROOT_DIRECTORY_LENGTH);
-    CHK(STRNLEN(pDeviceInfo->name, MAX_DEVICE_NAME_LEN) < MAX_DEVICE_NAME_LEN, STATUS_INVALID_DEVICE_NAME_LENGTH);
+    CHK(STRNLEN(pDeviceInfo->storageInfo.rootDirectory, MAX_PATH_LEN + 1) <= MAX_PATH_LEN, STATUS_INVALID_ROOT_DIRECTORY_LENGTH);
+    CHK(STRNLEN(pDeviceInfo->name, MAX_DEVICE_NAME_LEN + 1) <= MAX_DEVICE_NAME_LEN, STATUS_INVALID_DEVICE_NAME_LENGTH);
 
     // Validate the tags
     CHK_STATUS(validateTags(pDeviceInfo->tagCount, pDeviceInfo->tags));
@@ -139,10 +159,10 @@ STATUS validateTags(UINT32 tagCount, PTag tags)
         CHK(tags[i].version <= TAG_CURRENT_VERSION, STATUS_INVALID_TAG_VERSION);
 
         // Validate the tag name
-        CHK(STRNLEN(tags[i].name, MAX_TAG_NAME_LEN) < MAX_TAG_NAME_LEN, STATUS_INVALID_TAG_NAME_LEN);
+        CHK(STRNLEN(tags[i].name, MAX_TAG_NAME_LEN + 1) <= MAX_TAG_NAME_LEN, STATUS_INVALID_TAG_NAME_LEN);
 
         // Validate the tag value
-        CHK(STRNLEN(tags[i].value, MAX_TAG_VALUE_LEN) < MAX_TAG_VALUE_LEN, STATUS_INVALID_TAG_VALUE_LEN);
+        CHK(STRNLEN(tags[i].value, MAX_TAG_VALUE_LEN + 1) <= MAX_TAG_VALUE_LEN, STATUS_INVALID_TAG_VALUE_LEN);
     }
 
 CleanUp:
@@ -164,7 +184,7 @@ STATUS validateStreamInfo(PStreamInfo pStreamInfo, PClientCallbacks pClientCallb
     // Validate the stream info struct
     CHK(pStreamInfo != NULL, STATUS_NULL_ARG);
     CHK(pStreamInfo->version <= STREAM_INFO_CURRENT_VERSION, STATUS_INVALID_STREAM_INFO_VERSION);
-    CHK(STRNLEN(pStreamInfo->name, MAX_STREAM_NAME_LEN) < MAX_STREAM_NAME_LEN, STATUS_INVALID_STREAM_NAME_LENGTH);
+    CHK(STRNLEN(pStreamInfo->name, MAX_STREAM_NAME_LEN + 1) <= MAX_STREAM_NAME_LEN, STATUS_INVALID_STREAM_NAME_LENGTH);
 
     // Validate the retention period.
     // NOTE: 0 has is a sentinel value indicating no retention
@@ -188,7 +208,17 @@ STATUS validateStreamInfo(PStreamInfo pStreamInfo, PClientCallbacks pClientCallb
     pStreamInfo->streamCaps.frameRate = (pStreamInfo->streamCaps.frameRate == 0) ?
                                         DEFAULT_FRAME_RATE : pStreamInfo->streamCaps.frameRate;
 
+    CHK(pStreamInfo->streamCaps.trackInfoCount != 0 && pStreamInfo->streamCaps.trackInfoList != NULL, STATUS_TRACK_INFO_MISSING);
+    CHK(pStreamInfo->streamCaps.trackInfoCount <= MAX_SUPPORTED_TRACK_COUNT_PER_STREAM, STATUS_MAX_TRACK_COUNT_EXCEEDED);
     // Most the information is either optional or will be validated in the packager
+
+    CHK(!(pStreamInfo->retention == RETENTION_PERIOD_SENTINEL &&
+          IS_OFFLINE_STREAMING_MODE(pStreamInfo->streamCaps.streamingType)), STATUS_OFFLINE_MODE_WITH_ZERO_RETENTION);
+
+    if (IS_OFFLINE_STREAMING_MODE(pStreamInfo->streamCaps.streamingType)) {
+        pStreamInfo->streamCaps.connectionStalenessDuration = CONNECTION_STALENESS_DETECTION_SENTINEL;
+        pStreamInfo->streamCaps.maxLatency = STREAM_LATENCY_PRESSURE_CHECK_SENTINEL;
+    }
 
 CleanUp:
     return retStatus;

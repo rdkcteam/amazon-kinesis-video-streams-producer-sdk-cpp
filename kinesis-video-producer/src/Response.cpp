@@ -87,12 +87,17 @@ shared_ptr<Response> Response::create(Request &request) {
     response->error_buffer_[0] = '\0';
     curl_easy_setopt(response->curl_, CURLOPT_ERRORBUFFER, response->error_buffer_);
 
-    curl_easy_setopt(response->curl_, CURLOPT_URL, request.get_url().c_str());
+    curl_easy_setopt(response->curl_, CURLOPT_URL, request.getUrl().c_str());
     curl_easy_setopt(response->curl_, CURLOPT_NOSIGNAL, 1);
 
     // Curl will abort if the connection drops to below 10 bytes/s for 10 seconds.
-    curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_TIME, 10L);
-    curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_LIMIT, 10L);
+    //curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_TIME, 10L);
+    //curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_LIMIT, 10L);
+
+    //Comcast
+    // Curl will abort if the connection drops to below 1 bytes/s for 20 seconds.
+    curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_TIME, 20L);
+    curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_LIMIT, 1L);
 
     // add headers
     for (HeaderMap::const_iterator i = request.getHeaders().begin(); i != request.getHeaders().end(); ++i) {
@@ -167,11 +172,15 @@ Response::Response()
           http_status_code_(0),
           terminated_(false),
           service_call_result_(SERVICE_CALL_RESULT_OK),
-          start_time_(std::chrono::system_clock::now()) {
+          start_time_(systemCurrentTime()) {
 }
 
 Response::~Response() {
     closeCurlHandles();
+}
+
+bool Response::unPause() {
+    return CURLE_OK == curl_easy_pause(curl_, CURLPAUSE_CONT);
 }
 
 void Response::completeSync() {
@@ -197,7 +206,7 @@ void Response::completeSync() {
         }
     }
 
-    end_time_ = std::chrono::system_clock::now();
+    end_time_ = systemCurrentTime();
 
     // warn and log request/response info if there was an error return code
     if (OK != http_status_code_) {

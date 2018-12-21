@@ -1,5 +1,4 @@
 #include "AwsV4Signer.h"
-#include "Response.h"
 #include "Logger.h"
 #include <fstream>
 #include <openssl/hmac.h>
@@ -113,7 +112,7 @@ void AwsV4Signer::signRequest(Request &request) const {
 
 
 std::string AwsV4Signer::generateTimestamp(const char *format_string) {
-    auto now_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    time_t now_time = std::chrono::system_clock::to_time_t(systemCurrentTime());
     char timestamp[18] = {0};
     strftime(reinterpret_cast<char *>(&timestamp), 18, format_string, std::gmtime(&now_time));
     return std::string(timestamp);

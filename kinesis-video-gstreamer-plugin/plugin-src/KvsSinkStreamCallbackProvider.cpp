@@ -21,12 +21,14 @@ KvsSinkStreamCallbackProvider::streamConnectionStaleHandler(UINT64 custom_data,
 
 STATUS
 KvsSinkStreamCallbackProvider::streamErrorReportHandler(UINT64 custom_data, STREAM_HANDLE stream_handle,
-                                                           UINT64 errored_timecode, STATUS status_code) {
+                                                           UPLOAD_HANDLE upload_handle, UINT64 errored_timecode, STATUS status_code) {
     LOG_ERROR("Reporting stream error. Errored timecode: " << errored_timecode << " Status: 0x" << std::hex << status_code);
     auto customDataObj = reinterpret_cast<CustomData*>(custom_data);
-    if (status_code == static_cast<UINT32>(STATUS_DESCRIBE_STREAM_CALL_FAILED)) {
+    if (IS_RETRIABLE_ERROR(status_code)) {
         std::lock_guard<std::mutex> lk(customDataObj->closing_stream_handles_queue_mtx);
         customDataObj->closing_stream_handles_queue.push(stream_handle);
+    } else if (!IS_RECOVERABLE_ERROR(status_code)) {
+        customDataObj->stream_status = status_code;
     }
 
     return STATUS_SUCCESS;

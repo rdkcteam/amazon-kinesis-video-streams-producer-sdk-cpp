@@ -592,12 +592,12 @@ else()
   add_library(KinesisVideoProducerJNI SHARED EXCLUDE_FROM_ALL ${PRODUCER_SOURCE_FILES_JNI} ${PIC_SOURCE_FILES})
   target_link_libraries(KinesisVideoProducerJNI)
 
-  add_executable(start ${TST_PRODUCER_SOURCE_FILES})
-  target_link_libraries(start
-          producer
-          Threads::Threads
-          ${CMAKE_DL_LIBS}
-          ${LOG4CPLUS_LIBRARIES})
+  #add_executable(start ${TST_PRODUCER_SOURCE_FILES})
+  #target_link_libraries(start
+   #       producer
+    #      Threads::Threads
+     #     ${CMAKE_DL_LIBS}
+      #    ${LOG4CPLUS_LIBRARIES})
 
   add_executable(kinesis_video_gstreamer_sample_app ${GST_DEMO_APP})
   target_link_libraries(kinesis_video_gstreamer_sample_app

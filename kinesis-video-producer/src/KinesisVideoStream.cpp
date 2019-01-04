@@ -116,7 +116,6 @@ bool KinesisVideoStream::start() {
 
 bool KinesisVideoStream::resetConnection() {
     STATUS status = STATUS_SUCCESS;
-    LOG_ERROR("KinesisVideoStream::resetConnection : Reset connection");
 
     if (STATUS_FAILED(status = kinesisVideoStreamTerminated(stream_handle_,
                                                             INVALID_UPLOAD_HANDLE_VALUE,

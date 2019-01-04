@@ -94,9 +94,8 @@ shared_ptr<Response> Response::create(Request &request) {
     //curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_TIME, 10L);
     //curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_LIMIT, 10L);
 
-    //Comcast
-    // Curl will abort if the connection drops to below 1 bytes/s for 20 seconds.
-    curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_TIME, 20L);
+    // Curl will abort if the connection drops to below 1 bytes/s for 15 seconds.
+    curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_TIME, 15L);
     curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_LIMIT, 1L);
 
     // add headers
@@ -180,7 +179,16 @@ Response::~Response() {
 }
 
 bool Response::unPause() {
-    return CURLE_OK == curl_easy_pause(curl_, CURLPAUSE_CONT);
+    if (paused_) {
+        paused_ = false;
+        return CURLE_OK == curl_easy_pause(curl_, CURLPAUSE_SEND_CONT);
+    }
+
+    return true;
+}
+
+void Response::pause() {
+    paused_ = true;
 }
 
 void Response::completeSync() {

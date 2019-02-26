@@ -8,18 +8,18 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_ClusterBoundaryKeyFrame)
     PMkvGenerator mkvGenerator;
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     BYTE frameBuf[10000];
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
     UINT32 i;
     EncodedFrameInfo encodedFrameInfo;
 
     EXPECT_TRUE(STATUS_SUCCEEDED(createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS, MKV_TEST_TIMECODE_SCALE,
-            MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator)));
+            MKV_TEST_CLUSTER_DURATION, MKV_TEST_SEGMENT_UUID, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator)));
 
     // Add a Non-key frame
     EXPECT_TRUE(STATUS_SUCCEEDED(mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo)));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(mTrackInfoCount) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     // Add a Non-key frame
@@ -61,16 +61,17 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_LargeFrameTimecode)
     PMkvGenerator mkvGenerator;
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     BYTE frameBuf[10000];
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
     EncodedFrameInfo encodedFrameInfo;
 
     EXPECT_TRUE(STATUS_SUCCEEDED(createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS, MIN_TIMECODE_SCALE,
-                                                    MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator)));
+                                                    MKV_TEST_CLUSTER_DURATION, MKV_TEST_SEGMENT_UUID, &mTrackInfo,
+                                                    mTrackInfoCount, NULL, 0, &mkvGenerator)));
     // Add a Non-key frame
     EXPECT_TRUE(STATUS_SUCCEEDED(mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo)));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(mTrackInfoCount) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     // Add a Non-key frame - this time we should overflow int16 value for the timecode
@@ -91,7 +92,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CreateStoreMkvFromJpegAsH2
     PBYTE mkvBuffer = (PBYTE) MEMCALLOC(size, 1);
     PBYTE frameBuf = (PBYTE) MEMALLOC(MKV_TEST_BUFFER_SIZE);
     UINT64 frameDuration = 500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
-    Frame frame = {0, FRAME_FLAG_KEY_FRAME, 0, 0, frameDuration, 0, frameBuf};
+    Frame frame = {0, FRAME_FLAG_KEY_FRAME, 0, 0, frameDuration, 0, frameBuf, MKV_TEST_TRACKID};
     UINT32 i, cpdSize, index;
     UINT64 fileSize;
     BYTE cpd[] = {0x01, 0x42, 0x40, 0x15, 0xFF, 0xE1, 0x00, 0x09, 0x67, 0x42, 0x40, 0x28, 0x96, 0x54, 0x0a, 0x0f, 0xc8, 0x01, 0x00, 0x04, 0x68, 0xce, 0x3c, 0x80};
@@ -105,7 +106,8 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CreateStoreMkvFromJpegAsH2
 
     // Pretend it's h264 to enforce the video width and height inclusion in the track info
     EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_H264_CONTENT_TYPE, MKV_GEN_IN_STREAM_TIME, MKV_TEST_TIMECODE_SCALE,
-            2 * HUNDREDS_OF_NANOS_IN_A_SECOND, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator));
+                                                 2 * HUNDREDS_OF_NANOS_IN_A_SECOND, MKV_TEST_SEGMENT_UUID, &mTrackInfo,
+                                                 mTrackInfoCount, NULL, 0, &mkvGenerator));
     for (i = 0, index = 0; i < 100; i++) {
         SPRINTF(fileName, (PCHAR) "samples" FPATHSEPARATOR_STR "gif%03d.jpg", i);
         fileSize = MKV_TEST_BUFFER_SIZE;
@@ -157,7 +159,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CreateStoreMkvFromJpegAsFo
     PBYTE mkvBuffer = (PBYTE) MEMCALLOC(size, 1);
     PBYTE frameBuf = (PBYTE) MEMALLOC(MKV_TEST_BUFFER_SIZE);
     UINT64 frameDuration = 500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
-    Frame frame = {0, FRAME_FLAG_KEY_FRAME, 0, 0, frameDuration, 0, frameBuf};
+    Frame frame = {0, FRAME_FLAG_KEY_FRAME, 0, 0, frameDuration, 0, frameBuf, MKV_TEST_TRACKID};
     UINT32 i, cpdSize, index;
     UINT64 fileSize;
     BYTE cpd[] = {0x28, 0x00, 0x00, 0x00, 0x80, 0x02, 0x00, 0x00,
@@ -174,8 +176,8 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CreateStoreMkvFromJpegAsFo
     mTrackInfo.codecPrivateData = cpd;
 
     // This is a M-JPG to enforce the video width and height inclusion in the track info
-    EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_X_MKV_CONTENT_TYPE, MKV_GEN_IN_STREAM_TIME, MKV_TEST_TIMECODE_SCALE,
-                                                 2 * HUNDREDS_OF_NANOS_IN_A_SECOND, &mTrackInfo,
+    EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_X_MKV_VIDEO_CONTENT_TYPE, MKV_GEN_IN_STREAM_TIME, MKV_TEST_TIMECODE_SCALE,
+                                                 2 * HUNDREDS_OF_NANOS_IN_A_SECOND, MKV_TEST_SEGMENT_UUID, &mTrackInfo,
                                                  mTrackInfoCount, NULL, 0, &mkvGenerator));
 
     for (i = 0, index = 0; i < 100; i++) {
@@ -233,6 +235,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CreateStoreMkvTagsOnly)
                                                  MKV_GEN_IN_STREAM_TIME,
                                                  MKV_TEST_TIMECODE_SCALE,
                                                  2 * HUNDREDS_OF_NANOS_IN_A_SECOND,
+                                                 MKV_TEST_SEGMENT_UUID,
                                                  &mTrackInfo,
                                                  mTrackInfoCount,
                                                  NULL,
@@ -263,7 +266,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CreateStoreMkvMixedTags) {
     UINT32 size = 5000000, packagedSize;
     PBYTE mkvBuffer = (PBYTE) MEMCALLOC(size, 1);
     UINT64 frameDuration = 500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, frameDuration, SIZEOF(frameBuf), frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, frameDuration, SIZEOF(frameBuf), frameBuf, MKV_TEST_TRACKID};
     UINT32 frameIndex, i, cpdSize, index = 0;
     BYTE cpd[] = {0x28, 0x00, 0x00, 0x00, 0x80, 0x02, 0x00, 0x00,
                   0xe0, 0x01, 0x00, 0x00, 0x01, 0x00, 0x18, 0x00,
@@ -279,10 +282,10 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CreateStoreMkvMixedTags) {
     mTrackInfo.codecPrivateDataSize = cpdSize;
     mTrackInfo.codecPrivateData = cpd;
 
-    EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_X_MKV_CONTENT_TYPE,
+    EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_X_MKV_VIDEO_CONTENT_TYPE,
                                                  MKV_GEN_IN_STREAM_TIME | MKV_GEN_KEY_FRAME_PROCESSING,
                                                  MKV_TEST_TIMECODE_SCALE, 2 * HUNDREDS_OF_NANOS_IN_A_SECOND,
-                                                 &mTrackInfo, mTrackInfoCount,
+                                                 MKV_TEST_SEGMENT_UUID, &mTrackInfo, mTrackInfoCount,
                                                  NULL, 0, &mkvGenerator));
 
     // Generate a key-frame every 10th frame
@@ -348,7 +351,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CodecPrivateData)
     EncodedFrameInfo encodedFrameInfo;
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     PBYTE frameBuf = (PBYTE) MEMALLOC(MKV_TEST_BUFFER_SIZE);
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
     UINT32 i, cpdSize;
     UINT32 cpdSizes[3] = {0x80 - 2, 0x4000 - 2, 0x4000 - 1}; // edge cases for 1, 2 and 3 byte sizes
     PBYTE tempBuffer = (PBYTE) MEMCALLOC(MKV_MAX_CODEC_PRIVATE_LEN, 1);
@@ -359,14 +362,14 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_CodecPrivateData)
         mTrackInfo.codecPrivateDataSize = cpdSize;
         mTrackInfo.codecPrivateData = tempBuffer;
         EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS, MKV_TEST_TIMECODE_SCALE,
-                MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator));
+                MKV_TEST_CLUSTER_DURATION, MKV_TEST_SEGMENT_UUID, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator));
 
         // Add a frame
         size = MKV_TEST_BUFFER_SIZE;
         EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo));
 
         // Validate that it's a start of the stream + cluster
-        EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(MKV_TEST_TRACK_INFO_COUNT) + MKV_TRACK_VIDEO_BITS_SIZE + MKV_CODEC_PRIVATE_DATA_ELEM_SIZE + i + 1 + cpdSize, size);
+        EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
         EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
         // Add a Non-key frame
@@ -392,25 +395,25 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_ClusterBoundaryNonKeyFrame
     PMkvGenerator mkvGenerator;
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     PBYTE frameBuf = (PBYTE) MEMALLOC(MKV_TEST_BUFFER_SIZE);
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
     UINT32 i;
     EncodedFrameInfo encodedFrameInfo;
 
     EXPECT_TRUE(STATUS_SUCCEEDED(createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_GEN_IN_STREAM_TIME, MKV_TEST_TIMECODE_SCALE,
-            MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator)));
+            MKV_TEST_CLUSTER_DURATION, MKV_TEST_SEGMENT_UUID, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator)));
 
     // Add a Non-key frame
     EXPECT_TRUE(STATUS_SUCCEEDED(mkvgenPackageFrame(mkvGenerator, &frame, NULL, &size, &encodedFrameInfo)));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(mTrackInfoCount) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     // Add a Non-key frame with a buffer
     EXPECT_TRUE(STATUS_SUCCEEDED(mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo)));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(mTrackInfoCount) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     // Add a Non-key frame
@@ -498,10 +501,12 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_TimeCallbackCalls)
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     UINT32 retSize;
     PBYTE frameBuf = (PBYTE) MEMALLOC(MKV_TEST_BUFFER_SIZE);
-    Frame frame = {0, FRAME_FLAG_KEY_FRAME, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_KEY_FRAME, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
 
     EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_GEN_KEY_FRAME_PROCESSING, MKV_TEST_TIMECODE_SCALE,
-            MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, getTimeCallback, MKV_TEST_CUSTOM_DATA, &mkvGenerator));
+                                                 MKV_TEST_CLUSTER_DURATION, MKV_TEST_SEGMENT_UUID, &mTrackInfo,
+                                                 mTrackInfoCount, getTimeCallback,
+                                                 MKV_TEST_CUSTOM_DATA, &mkvGenerator));
 
     // Add a key frame - get size first
     EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(mkvGenerator, &frame, NULL, &size, NULL));
@@ -534,10 +539,12 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenPackageFrame_TimeCallbackCallsNotCalled
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     UINT32 retSize;
     PBYTE frameBuf = (PBYTE) MEMALLOC(MKV_TEST_BUFFER_SIZE);
-    Frame frame = {0, FRAME_FLAG_KEY_FRAME, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_KEY_FRAME, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
 
-    EXPECT_TRUE(STATUS_SUCCEEDED(createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS, MKV_TEST_TIMECODE_SCALE,
-            MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, getTimeCallback, MKV_TEST_CUSTOM_DATA, &mkvGenerator)));
+    EXPECT_TRUE(STATUS_SUCCEEDED(createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS,
+                                                    MKV_TEST_TIMECODE_SCALE, MKV_TEST_CLUSTER_DURATION,
+                                                    MKV_TEST_SEGMENT_UUID, &mTrackInfo, mTrackInfoCount,
+                                                    getTimeCallback, MKV_TEST_CUSTOM_DATA, &mkvGenerator)));
 
     // Add a key frame - get size first
     EXPECT_TRUE(STATUS_SUCCEEDED(mkvgenPackageFrame(mkvGenerator, &frame, NULL, &size, NULL)));
@@ -566,17 +573,19 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenResetGenerator_Variations)
     PMkvGenerator mkvGenerator;
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     PBYTE frameBuf = (PBYTE) MEMALLOC(MKV_TEST_BUFFER_SIZE);
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
     EncodedFrameInfo encodedFrameInfo;
 
-    EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS, MKV_TEST_TIMECODE_SCALE,
-                                                    MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator));
+    EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS,
+                                                 MKV_TEST_TIMECODE_SCALE, MKV_TEST_CLUSTER_DURATION,
+                                                 MKV_TEST_SEGMENT_UUID, &mTrackInfo, mTrackInfoCount,
+                                                 NULL, 0, &mkvGenerator));
 
     // Add a Non-key frame
     EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(MKV_TEST_TRACK_INFO_COUNT) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     // Add a Non-key frame
@@ -619,7 +628,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenResetGenerator_Variations)
     EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(MKV_TEST_TRACK_INFO_COUNT) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     MEMFREE(frameBuf);
@@ -630,7 +639,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenResetGeneratorWithAvccAdaptation_Variat
     PMkvGenerator mkvGenerator;
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     PBYTE frameBuf = (PBYTE) MEMALLOC(size);
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
     UINT32 i, runSize = 100 - SIZEOF(UINT32);
     EncodedFrameInfo encodedFrameInfo;
 
@@ -641,13 +650,14 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenResetGeneratorWithAvccAdaptation_Variat
     }
 
     EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS | MKV_GEN_ADAPT_AVCC_NALS, MKV_TEST_TIMECODE_SCALE,
-                                                 MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator));
+                                                 MKV_TEST_CLUSTER_DURATION, MKV_TEST_SEGMENT_UUID, &mTrackInfo,
+                                                 mTrackInfoCount, NULL, 0, &mkvGenerator));
 
     // Add a Non-key frame
     EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(MKV_TEST_TRACK_INFO_COUNT) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     // Add a Non-key frame
@@ -690,7 +700,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenResetGeneratorWithAvccAdaptation_Variat
     EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(10000 + GET_MKV_HEADER_OVERHEAD(MKV_TEST_TRACK_INFO_COUNT) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(10000 + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     MEMFREE(frameBuf);
@@ -701,7 +711,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenResetGeneratorWithAnnexBAdaptation_Vari
     PMkvGenerator mkvGenerator;
     UINT32 size = MKV_TEST_BUFFER_SIZE;
     BYTE frameBuf[10000];
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, 10000, frameBuf, MKV_TEST_TRACKID};
     UINT32 i, adaptedSize;
     EncodedFrameInfo encodedFrameInfo;
 
@@ -718,13 +728,14 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenResetGeneratorWithAnnexBAdaptation_Vari
     adaptedSize = SIZEOF(frameBuf) / 100 + SIZEOF(frameBuf);
 
     EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS | MKV_GEN_ADAPT_ANNEXB_NALS, MKV_TEST_TIMECODE_SCALE,
-                                                 MKV_TEST_CLUSTER_DURATION, &mTrackInfo, mTrackInfoCount, NULL, 0, &mkvGenerator));
+                                                 MKV_TEST_CLUSTER_DURATION, MKV_TEST_SEGMENT_UUID, &mTrackInfo,
+                                                 mTrackInfoCount, NULL, 0, &mkvGenerator));
 
     // Add a Non-key frame
     EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(adaptedSize + GET_MKV_HEADER_OVERHEAD(MKV_TEST_TRACK_INFO_COUNT) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(adaptedSize + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 
     // Add a Non-key frame
@@ -768,7 +779,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenResetGeneratorWithAnnexBAdaptation_Vari
     EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(mkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo));
 
     // Validate that it's a start of the stream + cluster
-    EXPECT_EQ(adaptedSize + GET_MKV_HEADER_OVERHEAD(MKV_TEST_TRACK_INFO_COUNT) + MKV_TRACK_VIDEO_BITS_SIZE, size);
+    EXPECT_EQ(adaptedSize + mkvgenGetMkvHeaderOverhead(&mTrackInfo, mTrackInfoCount), size);
     EXPECT_EQ(MKV_STATE_START_STREAM, encodedFrameInfo.streamState);
 }
 
@@ -785,24 +796,28 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenMkvTracksHeaderWithMultipleTrack)
 
     TrackInfo testTrackInfo[2];
     // video track;
-    testTrackInfo[0].trackId = 0;
+    testTrackInfo[0].trackId = MKV_TEST_TRACKID;
     STRCPY(testTrackInfo[0].codecId, MKV_TEST_CODEC_ID);
     STRCPY(testTrackInfo[0].trackName, MKV_TEST_TRACK_NAME);
     testTrackInfo[0].codecPrivateDataSize = videoCpdSize;
     testTrackInfo[0].codecPrivateData = videoCpd;
+    testTrackInfo[0].trackCustomData.trackVideoConfig.videoWidth = 1280;
+    testTrackInfo[0].trackCustomData.trackVideoConfig.videoHeight = 720;
     testTrackInfo[0].trackType = MKV_TRACK_INFO_TYPE_VIDEO;
 
     // audio track;
-    testTrackInfo[1].trackId = 1;
+    testTrackInfo[1].trackId = MKV_TEST_TRACKID + 1;
     STRCPY(testTrackInfo[1].codecId, MKV_TEST_CODEC_ID);
     STRCPY(testTrackInfo[1].trackName, MKV_TEST_TRACK_NAME);
     testTrackInfo[1].codecPrivateDataSize = audioCpdSize;
     testTrackInfo[1].codecPrivateData = audioCpd;
+    testTrackInfo[1].trackCustomData.trackAudioConfig.channelConfig = 2;
+    testTrackInfo[1].trackCustomData.trackAudioConfig.samplingFrequency = 44100;
     testTrackInfo[1].trackType = MKV_TRACK_INFO_TYPE_AUDIO;
 
     UINT32 testTrackInfoCount = 2;
     BYTE frameBuf[10000];
-    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, SIZEOF(frameBuf), frameBuf};
+    Frame frame = {0, FRAME_FLAG_NONE, 0, 0, MKV_TEST_FRAME_DURATION, SIZEOF(frameBuf), frameBuf, MKV_TEST_TRACKID};
     EncodedFrameInfo encodedFrameInfo;
     PBYTE pCurrentPnt = NULL;
     BYTE tracksElementId[] = {0x16, 0x54, 0xae, 0x6b};
@@ -811,7 +826,8 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenMkvTracksHeaderWithMultipleTrack)
     UINT32 encodedCpdLen = 0;
 
     EXPECT_EQ(STATUS_SUCCESS, createMkvGenerator(MKV_TEST_CONTENT_TYPE, MKV_TEST_BEHAVIOR_FLAGS, MKV_TEST_TIMECODE_SCALE,
-                                                 MKV_TEST_CLUSTER_DURATION, testTrackInfo, testTrackInfoCount, NULL, 0, &pMkvGenerator));
+                                                 MKV_TEST_CLUSTER_DURATION, MKV_TEST_SEGMENT_UUID, testTrackInfo,
+                                                 testTrackInfoCount, NULL, 0, &pMkvGenerator));
     EXPECT_EQ(STATUS_SUCCESS, mkvgenPackageFrame(pMkvGenerator, &frame, mBuffer, &size, &encodedFrameInfo));
 
     // Jump to beginning of Tracks element
@@ -822,7 +838,7 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenMkvTracksHeaderWithMultipleTrack)
 
     // Calculated size of the mkv Tracks element
     pStreamMkvGenerator = (PStreamMkvGenerator) pMkvGenerator;
-    mkvTracksElementSize = MKV_TRACK_INFO_BITS_SIZE * testTrackInfoCount + mkvgenGetHeaderOverhead(pStreamMkvGenerator);
+    mkvTracksElementSize = mkvgenGetMkvTrackHeaderSize(testTrackInfo, testTrackInfoCount) - MKV_TRACKS_ELEM_BITS_SIZE;
 
     // Jump to the acutal size of the mkv Tracks element stored in buffer
     pCurrentPnt += SIZEOF(mkvTracksElementSize);
@@ -839,8 +855,9 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenMkvTracksHeaderWithMultipleTrack)
                            0,
                            &encodedCpdLen);
 
-    // Jump to the beginning of video cpd bits
-    pCurrentPnt += MKV_TRACK_INFO_BITS_SIZE + MKV_TRACK_VIDEO_BITS_SIZE + MKV_CODEC_PRIVATE_DATA_ELEM_SIZE + encodedCpdLen;
+    // Jump to the beginning of video cpd bits. mkvgenGetMkvTrackHeaderSize includes MKV_TRACKS_ELEM_BITS_SIZE but we just
+    // want the track entry size, therefore subtract MKV_TRACKS_ELEM_BITS_SIZE
+    pCurrentPnt += (mkvgenGetMkvTrackHeaderSize(testTrackInfo, 1) - MKV_TRACKS_ELEM_BITS_SIZE - videoCpdSize);
 
     // Verify that the bits match
     EXPECT_EQ(0, MEMCMP(pCurrentPnt, videoCpd, videoCpdSize));
@@ -853,7 +870,9 @@ TEST_F(MkvgenApiFunctionalityTest, mkvgenMkvTracksHeaderWithMultipleTrack)
                            0,
                            &encodedCpdLen);
 
-    pCurrentPnt += MKV_TRACK_INFO_BITS_SIZE + MKV_TRACK_AUDIO_BITS_SIZE + MKV_CODEC_PRIVATE_DATA_ELEM_SIZE + encodedCpdLen;
+    // Jump to the beginning of audio cpd bits. mkvgenGetMkvTrackHeaderSize includes MKV_TRACKS_ELEM_BITS_SIZE but we just
+    // want the track entry size, therefore subtract MKV_TRACKS_ELEM_BITS_SIZE
+    pCurrentPnt += (mkvgenGetMkvTrackHeaderSize(testTrackInfo + 1, 1) - MKV_TRACKS_ELEM_BITS_SIZE - audioCpdSize);
 
     // Verify that the bits match
     EXPECT_EQ(0, MEMCMP(pCurrentPnt, audioCpd, audioCpdSize));

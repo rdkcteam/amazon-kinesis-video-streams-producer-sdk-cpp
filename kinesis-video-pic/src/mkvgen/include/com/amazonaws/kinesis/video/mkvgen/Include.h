@@ -64,6 +64,8 @@ extern "C" {
 #define STATUS_MKV_INVALID_AAC_CPD_CHANNEL_CONFIG                                   STATUS_MKVGEN_BASE + 0x00000024
 #define STATUS_MKV_INVALID_AAC_CPD                                                  STATUS_MKVGEN_BASE + 0x00000025
 #define STATUS_MKV_TRACK_INFO_NOT_FOUND                                             STATUS_MKVGEN_BASE + 0x00000026
+#define STATUS_MKV_INVALID_SEGMENT_UUID                                             STATUS_MKVGEN_BASE + 0x00000027
+#define STATUS_MKV_INVALID_TRACK_UID                                                STATUS_MKVGEN_BASE + 0x00000028
 
 ////////////////////////////////////////////////////
 // Main structure declarations
@@ -112,6 +114,11 @@ extern "C" {
 #define MIN_TIMECODE_SCALE                  1
 
 /**
+ * The size of the Segment UUID in bytes.
+ */
+#define MKV_SEGMENT_UUID_LEN                16
+
+/**
  * Max possible timestamp - signed value. This is needed so we won't overflow
  * while multiplying by 100ns (default Kinesis Video time scale) and then divide it
  * by the value of the timecode scale before subtracting the cluster timecode
@@ -158,9 +165,13 @@ typedef enum {
     MKV_STATE_START_BLOCK,
 } MKV_STREAM_STATE, *PMKV_STREAM_STATE;
 
+/**
+ * Track types taken from the MKV specification
+ */
 typedef enum {
-    MKV_TRACK_INFO_TYPE_VIDEO,
-    MKV_TRACK_INFO_TYPE_AUDIO,
+    MKV_TRACK_INFO_TYPE_VIDEO = (BYTE) 0x01,
+    MKV_TRACK_INFO_TYPE_AUDIO = (BYTE) 0x02,
+    MKV_TRACK_INFO_TYPE_UNKOWN = (BYTE) 0x03,
 } MKV_TRACK_INFO_TYPE, *PMKV_TRACK_INFO_TYPE;
 
 /**
@@ -247,7 +258,7 @@ typedef struct {
  *
  * The initializer will zero all the fields and set the EoFr flag in flags.
  */
-#define EOFR_FRAME_INITIALIZER {0, FRAME_FLAG_END_OF_FRAGMENT, 0, 0, 0, 0, NULL, 0}
+#define EOFR_FRAME_INITIALIZER {0, FRAME_FLAG_END_OF_FRAGMENT, 0, 0, 0, 0, NULL, 1}
 
 /**
  * The representation of mkv video element
@@ -361,17 +372,16 @@ typedef UINT64 (*GetCurrentTimeFunc)(UINT64);
  * @UINT32 - The behavior flags
  * @UINT64 - Default timecode scale which will be applied to the generated MKV in 100ns
  * @UINT64 - Duration of the cluster in 100ns
- * @PCHAR - the codec ID of the track
- * @PCHAR - the track name
- * @PBYTE - codec private data
- * UINT32 - size of the codec private data
+ * @PBYTE - IN/OPT - Optional Segment UUID to use with size MKV_SEGMENT_UUID_LEN. Otherwise random UUID is generated
+ * @PTrackInfo - IN - List of TrackInfo structures
+ * @UINT32 - Number of the TrackInfo elements in the list
  * @GetCurrentTimeFunc - the time function callback
  * UINT64 - custom data to be passed to the callback
  * @PMkvGenerator* - returns the newly created object
  *
  * @return - STATUS code of the execution
  */
-PUBLIC_API STATUS createMkvGenerator(PCHAR, UINT32, UINT64, UINT64, PTrackInfo, UINT32, GetCurrentTimeFunc, UINT64, PMkvGenerator*);
+PUBLIC_API STATUS createMkvGenerator(PCHAR, UINT32, UINT64, UINT64, PBYTE, PTrackInfo, UINT32, GetCurrentTimeFunc, UINT64, PMkvGenerator*);
 
 /**
  * Frees and de-allocates the memory of the MkvGenerator and it's sub-objects
@@ -464,6 +474,18 @@ PUBLIC_API STATUS mkvgenGetMkvOverheadSize(PMkvGenerator, MKV_STREAM_STATE, PUIN
  * @return - STATUS code of the execution
  */
 PUBLIC_API STATUS mkvgenGetCurrentTimestamps(PMkvGenerator, PUINT64, PUINT64, PUINT64);
+
+/**
+ * Sets the Codec Private Data for a particular track
+ *
+ * @PMkvGenerator - The generator object
+ * UINT64 - IN - Track ID to set the Codec Private Data for
+ * UINT32 - IN - Codec Private Data size
+ * PBYTE - IN - Codec private Data bytes
+ *
+ * @return - STATUS code of the execution
+ */
+PUBLIC_API STATUS mkvgenSetCodecPrivateData(PMkvGenerator, UINT64, UINT32, PBYTE);
 
 #pragma pack(pop, include)
 

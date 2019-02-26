@@ -180,12 +180,17 @@ typedef __KinesisVideoBase* PKinesisVideoBase;
  */
 #define TRANSFER_RATE_MEASURING_INTERVAL_EPSILON               (DOUBLE) 0.2
 
-/*
+/**
+ *
+ */
+#define FRAME_ALLOC_FRAGMENTATION_FACTOR                       (DOUBLE) 1.8
+
+/**
  * Definition that controls whether we enabled the persist ACK awaiting for the last cluster or not.
  * This needs to be changed to TRUE when the backend processing is enabled or the value should be
  * removed entirely from the WAIT_FOR_PERSISTED_ACK macro.
  */
-#define AWAIT_FOR_PERSISTED_ACK                 FALSE
+#define AWAIT_FOR_PERSISTED_ACK                 TRUE
 
 /**
  * Macro that checks whether to wait for the persistent ACK or not
@@ -193,6 +198,26 @@ typedef __KinesisVideoBase* PKinesisVideoBase;
 #define WAIT_FOR_PERSISTED_ACK(x)               (AWAIT_FOR_PERSISTED_ACK && \
                                                     (x)->streamInfo.streamCaps.fragmentAcks && \
                                                     (x)->streamInfo.retention != RETENTION_PERIOD_SENTINEL)
+
+/**
+ * Controls whether we enable auth info expiration randomization
+ */
+#define ENABLE_AUTH_INFO_EXPIRATION_RANDOMIZATION       TRUE
+
+/**
+ * The threshold beyond which we won't do any auth info expiration randomization
+ */
+#define AUTH_INFO_EXPIRATION_RANDOMIZATION_DURATION_THRESHOLD       5 * HUNDREDS_OF_NANOS_IN_A_MINUTE
+
+/**
+ * Max randomization value to be added
+ */
+#define MAX_AUTH_INFO_EXPIRATION_RANDOMIZATION                      3 * HUNDREDS_OF_NANOS_IN_A_MINUTE
+
+/**
+ * Ratio of the expiration to use for jitter
+ */
+#define AUTH_INFO_EXPIRATION_JITTER_RATIO                           0.1L
 
 /**
  * Kinesis Video client internal structure
@@ -272,6 +297,11 @@ STATUS provisionKinesisVideoProducer(PKinesisVideoClient);
  * Returns the current auth integration type
  */
 AUTH_INFO_TYPE getCurrentAuthType(PKinesisVideoClient);
+
+/**
+ * Randomizing or adding a jitter to the auth info expiration
+ */
+UINT64 randomizeAuthInfoExpiration(PKinesisVideoClient, UINT64, UINT64);
 
 /**
  * Default implementations of some of the callbacks if the caller hasn't specified them

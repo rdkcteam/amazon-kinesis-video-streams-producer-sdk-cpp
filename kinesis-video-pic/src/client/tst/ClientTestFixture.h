@@ -6,6 +6,7 @@
 #include <com/amazonaws/kinesis/video/utils/Include.h>
 #include <com/amazonaws/kinesis/video/client/Include.h>
 #include "src/client/src/Include_i.h"
+#include "src/client/src/Stream.h"
 #include "src/mkvgen/src/Include_i.h"
 
 #define TEST_DEVICE_NAME                ((PCHAR) "Test device name")
@@ -22,7 +23,9 @@
 #define TEST_CONTENT_TYPE               ((PCHAR) "TestContentType")
 #define TEST_CODEC_ID                   ((PCHAR) "TestCodec")
 #define TEST_TRACK_NAME                 ((PCHAR) "TestTrack")
-#define TEST_TRACKID                    0
+#define TEST_TRACKID                    1
+#define TEST_TRACK_INDEX                0
+#define TEST_INVALID_TRACK_ID           100
 
 #define TEST_DEVICE_ARN                 ((PCHAR) "TestDeviceARN")
 
@@ -34,7 +37,7 @@
 
 #define TEST_STREAMING_TOKEN            "TestStreamingToken"
 
-#define TEST_STREAMING_HANDLE           12345
+#define TEST_UPLOAD_HANDLE              12345
 
 #define TEST_BUFFER_DURATION            (40 * HUNDREDS_OF_NANOS_IN_A_SECOND)
 #define TEST_REPLAY_DURATION            (20 * HUNDREDS_OF_NANOS_IN_A_SECOND)
@@ -48,6 +51,14 @@
 
 #define TEST_AUTH_EXPIRATION            (UINT64)(-1LL)
 #define TEST_TRACK_COUNT                1
+
+#define TEST_SEGMENT_UUID               ((PBYTE) "0123456789abcdef")
+
+// Random const value to be returned
+#define TEST_CONST_RAND_FUNC_BYTE       42
+
+// Offset of the MKV Segment Info UUID from the beginning of the header
+#define MKV_SEGMENT_UUID_OFFSET         53
 
 //
 // Default allocator functions
@@ -258,6 +269,7 @@ public:
         mDeviceInfo.tags = NULL;
         mDeviceInfo.storageInfo.version = STORAGE_INFO_CURRENT_VERSION;
         mDeviceInfo.storageInfo.rootDirectory[0] = '\0';
+        mDeviceInfo.certPath[0] = '\0';
         mDeviceInfo.storageInfo.spillRatio = 0;
         mDeviceInfo.storageInfo.storageType = DEVICE_STORAGE_TYPE_IN_MEM;
         mDeviceInfo.storageInfo.storageSize = TEST_DEVICE_STORAGE_SIZE;
@@ -286,13 +298,16 @@ public:
         mStreamInfo.streamCaps.replayDuration = TEST_REPLAY_DURATION;
         mStreamInfo.streamCaps.timecodeScale = 0;
         mStreamInfo.streamCaps.trackInfoCount = 1;
-        trackInfo.trackId = TEST_TRACKID;
-        trackInfo.codecPrivateDataSize = 0;
-        trackInfo.codecPrivateData = NULL;
-        STRCPY(trackInfo.codecId, TEST_CODEC_ID);
-        STRCPY(trackInfo.trackName, TEST_TRACK_NAME);
-        trackInfo.trackType = MKV_TRACK_INFO_TYPE_VIDEO;
-        mStreamInfo.streamCaps.trackInfoList = &trackInfo;
+        mStreamInfo.streamCaps.segmentUuid = TEST_SEGMENT_UUID;
+        mTrackInfo.trackId = TEST_TRACKID;
+        mTrackInfo.codecPrivateDataSize = 0;
+        mTrackInfo.codecPrivateData = NULL;
+        STRCPY(mTrackInfo.codecId, TEST_CODEC_ID);
+        STRCPY(mTrackInfo.trackName, TEST_TRACK_NAME);
+        mTrackInfo.trackType = MKV_TRACK_INFO_TYPE_VIDEO;
+        mTrackInfo.trackCustomData.trackVideoConfig.videoWidth = 1280;
+        mTrackInfo.trackCustomData.trackVideoConfig.videoHeight = 720;
+        mStreamInfo.streamCaps.trackInfoList = &mTrackInfo;
     }
 
     PVOID basicProducerRoutine(UINT64);
@@ -341,7 +356,7 @@ protected:
     UINT32 mTagCount;
     CHAR mResourceArn[MAX_ARN_LEN];
     UINT64 mStreamUploadHandle;
-    TrackInfo trackInfo;
+    TrackInfo mTrackInfo;
 
     // Callback function count
     volatile UINT32 mGetCurrentTimeFuncCount;
@@ -565,7 +580,9 @@ protected:
     // Static callbacks definitions
     //////////////////////////////////////////////////////////////////////////////////////
     static UINT64 getCurrentTimeFunc(UINT64);
+    static UINT64 getCurrentPresetTimeFunc(UINT64);
     static UINT32 getRandomNumberFunc(UINT64);
+    static UINT32 getRandomNumberConstFunc(UINT64);
     static VOID logPrintFunc(UINT32, PCHAR, PCHAR, ...);
     static STATUS getDeviceCertificateFunc(UINT64, PBYTE*, PUINT32, PUINT64);
     static STATUS getSecurityTokenFunc(UINT64, PBYTE*, PUINT32, PUINT64);

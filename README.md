@@ -44,9 +44,29 @@ This library is licensed under the Amazon Software License.
 
 ----
 ### Release notes
+
+#### Release 1.7.6 (21th Feb 2019)
+* Audio integration for Kinesis Video Stream. Now Kinesis Video Streams Producer SDK CPP supports ingesting video and audio.
+
+#### Release 1.7.5 (16th Feb 2019)
+* Stability and bug fixes.
+
+#### Release 1.7.4 (14th Feb 2019)
+* Stability and bug fixes.
+
+#### Release 1.7.3 (12th Feb 2019)
+* Enforce non-zero TrackUid and SegmentUUID.
+
+#### Release 1.7.2 (8th Feb 2019)
+* JNI free object logic fix used by Java KVS SDK.
+
+#### Release 1.7.1 (6th Feb 2019)
+* Removed kinesis_video_gstreamer_sample_rtsp_app as the kinesis_video_gstreamer_sample_app has become multi-purposed for webcams, rtsp and video files.
+* stability fixes.
+
 #### Release 1.7.0 (14th Dec 2018)
 * Added support for uploading files(offline mode) to Kinesis Video Stream
-* Stability fixes
+* Additional fixes
 
 #### Release 1.6.0 (3rd Dec 2018)
 * JNI namespace change

@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "Logger.h"
 #include <mutex>
 #include <iostream>
 #include <utility>
@@ -11,13 +10,17 @@
 #include "com/amazonaws/kinesis/video/client/Include.h"
 #include "KinesisVideoProducer.h"
 #include "KinesisVideoStreamMetrics.h"
+#include "StreamDefinition.h"
 
 namespace com { namespace amazonaws { namespace kinesis { namespace video {
 
 /**
  * Stream stop timeout duration.
+ * This needs to be extended to allow post stream stop stream.
  **/
-#define STREAM_CLOSED_TIMEOUT_DURATION_IN_SECONDS 30
+#define STREAM_CLOSED_TIMEOUT_DURATION_IN_SECONDS 120
+
+#define DEBUG_DUMP_FRAME_INFO "DEBUG_DUMP_FRAME_INFO"
 
 /**
 * This definition comes from the Kinesis Video PIC, the typedef is to allow differentiation in case of other "Frame" definitions.
@@ -85,13 +88,13 @@ public:
      * Initializes the track identified by trackId with a hex-encoded codec private data
      * and puts the stream in a state that it is ready to receive frames via putFrame().
      */
-    bool start(const std::string& hexEncodedCodecPrivateData, uint64_t trackId = 0);
+    bool start(const std::string& hexEncodedCodecPrivateData, uint64_t trackId = DEFAULT_TRACK_ID);
 
     /**
      * Initializes the track identified by trackId  with a binary codec private data
      * and puts the stream in a state that it is ready to receive frames via putFrame().
      */
-    bool start(const unsigned char* codecPrivateData, size_t codecPrivateDataSize, uint64_t trackId = 0);
+    bool start(const unsigned char* codecPrivateData, size_t codecPrivateDataSize, uint64_t trackId = DEFAULT_TRACK_ID);
 
     /**
      * Initializes the stream and puts the stream in a state that it is ready to receive frames via putFrame().
@@ -248,6 +251,11 @@ protected:
      * Stream metrics
      */
     KinesisVideoStreamMetrics stream_metrics_;
+
+    /**
+     * Whether to dump frame info into file.
+     */
+    bool debug_dump_frame_info_;
 };
 
 } // namespace video

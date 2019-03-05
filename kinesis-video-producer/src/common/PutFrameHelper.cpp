@@ -6,21 +6,22 @@ namespace com { namespace amazonaws { namespace kinesis { namespace video {
 LOGGER_TAG("com.amazonaws.kinesis.video");
 
 PutFrameHelper::PutFrameHelper(
-        shared_ptr<KinesisVideoStream> kinesis_video_stream,
-        uint64_t mkv_timecode_scale_ns,
-        uint32_t max_audio_queue_size,
-        uint32_t max_video_queue_size,
-        uint32_t initial_buffer_size_audio,
-        uint32_t initial_buffer_size_video) :
-            kinesis_video_stream(kinesis_video_stream),
-            MAX_AUDIO_QUEUE_SIZE(max_audio_queue_size),
-            MAX_VIDEO_QUEUE_SIZE(max_video_queue_size),
-            MKV_TIMECODE_SCALE_NS(mkv_timecode_scale_ns),
-            INITIAL_BUFFER_SIZE_AUDIO(initial_buffer_size_audio),
-            INITIAL_BUFFER_SIZE_VIDEO(initial_buffer_size_video),
-            next_available_buffer_audio(0),
-            next_available_buffer_video(0),
-            put_frame_status(true) {
+    shared_ptr<KinesisVideoStream> kinesis_video_stream,
+    uint64_t mkv_timecode_scale_ns,
+    uint32_t max_audio_queue_size,
+    uint32_t max_video_queue_size,
+    uint32_t initial_buffer_size_audio,
+    uint32_t initial_buffer_size_video) :
+    kinesis_video_stream(kinesis_video_stream),
+    MAX_AUDIO_QUEUE_SIZE(max_audio_queue_size),
+    MAX_VIDEO_QUEUE_SIZE(max_video_queue_size),
+    MKV_TIMECODE_SCALE_NS(mkv_timecode_scale_ns),
+    INITIAL_BUFFER_SIZE_AUDIO(initial_buffer_size_audio),
+    INITIAL_BUFFER_SIZE_VIDEO(initial_buffer_size_video),
+    next_available_buffer_audio(0),
+    next_available_buffer_video(0),
+    put_frame_status(true),
+    eofr_put(false) {
 
     for(uint32_t i = 0; i < MAX_VIDEO_QUEUE_SIZE; i++) {
         FrameDataBuffer frameDataBuffer;
@@ -66,6 +67,14 @@ void PutFrameHelper::putFrameMultiTrack(Frame frame, bool isVideo) {
         if (audio_pts >= video_pts) {
             break;
         }
+
+        // If user is using eofr frames, then they should not set any FRAME_FLAG_KEY_FRAME in frame flags.
+        // First frame to be put after the eofr frame will have the FRAME_FLAG_KEY_FRAME flag.
+        if (eofr_put) {
+            audio_frame.flags = (FRAME_FLAGS) (audio_frame.flags | FRAME_FLAG_KEY_FRAME);
+            eofr_put = false;
+        }
+
         if (!kinesis_video_stream->putFrame(audio_frame)) {
             put_frame_status = false;
             LOG_WARN("Failed to put audio frame");
@@ -76,6 +85,14 @@ void PutFrameHelper::putFrameMultiTrack(Frame frame, bool isVideo) {
     // Sync audio frames to video frames. audio_frame_queue being not empty here means there is a audio frame whose timestamp
     // is greater than video_front.
     if (!audio_frame_queue.empty()) {
+
+        // If user is using eofr frames, then they should not set any FRAME_FLAG_KEY_FRAME in frame flags.
+        // First frame to be put after the eofr frame will have the FRAME_FLAG_KEY_FRAME flag.
+        if (eofr_put) {
+            video_front.flags = (FRAME_FLAGS) (video_front.flags | FRAME_FLAG_KEY_FRAME);
+            eofr_put = false;
+        }
+
         if (!kinesis_video_stream->putFrame(video_front)) {
             put_frame_status = false;
             LOG_WARN("Failed to put video frame. Frame flag: " << video_front.flags);
@@ -147,6 +164,15 @@ uint8_t *PutFrameHelper::getFrameDataBuffer(uint32_t requested_buffer_size, bool
 
 bool PutFrameHelper::putFrameFailed() {
     return put_frame_status;
+}
+
+void PutFrameHelper::putEofr() {
+    eofr_put = true;
+    if (!kinesis_video_stream->putFrame(EOFR_FRAME_INITIALIZER)) {
+        put_frame_status = false;
+        LOG_WARN("Failed to put eofr frame");
+        eofr_put = false;
+    }
 }
 
 PutFrameHelper::~PutFrameHelper() {

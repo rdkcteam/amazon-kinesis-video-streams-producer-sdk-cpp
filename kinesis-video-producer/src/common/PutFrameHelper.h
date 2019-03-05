@@ -6,8 +6,8 @@
 #include <vector>
 
 namespace {
-    const uint32_t DEFAULT_MAX_AUDIO_QUEUE_SIZE = 200;
-    const uint32_t DEFAULT_MAX_VIDEO_QUEUE_SIZE = 50;
+    const uint32_t DEFAULT_MAX_AUDIO_QUEUE_SIZE = 100;
+    const uint32_t DEFAULT_MAX_VIDEO_QUEUE_SIZE = 20;
     const uint64_t DEFAULT_MKV_TIMECODE_SCALE_NS = 1000000;
     const uint32_t DEFAULT_BUFFER_SIZE_AUDIO = 50 * 1024;
     const uint32_t DEFAULT_BUFFER_SIZE_VIDEO = 100 * 1024;

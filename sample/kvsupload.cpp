@@ -1038,6 +1038,7 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
     FRAME_FLAGS kinesis_video_flags;
     gchar *g_stream_handle_key = gst_element_get_name(sink);
     int track_id = (string(g_stream_handle_key).back()) - '0';
+    g_free(g_stream_handle_key);
     uint8_t *data_buffer;
     Frame frame;
     GstFlowReturn ret = GST_FLOW_OK;

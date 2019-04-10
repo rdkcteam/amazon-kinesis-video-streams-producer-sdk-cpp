@@ -453,7 +453,7 @@ include_directories(${OPEN_SRC_INCLUDE_DIRS})
 include_directories(/System/Library/Frameworks/JavaVM.framework/Versions/Current/Headers)
 include_directories(${JAVA_HOME}/include)
 include_directories(${JAVA_HOME}/include/${CMAKE_SYSTEM_NAME_LOWER_CASE})
-
+include_directories(${KINESIS_VIDEO_OPEN_SOURCE_SRC}/include/gstreamer-1.0)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   include_directories("${JAVA_HOME}/include/win32")
   include_directories("${KINESIS_VIDEO_OPEN_SOURCE_SRC}/googletest-release-1.8.0/googletest/include")

@@ -3,7 +3,7 @@
 #include <iomanip>
 #include "CredentialProviderUtil.h"
 
-#define REQUEST_COMPLETION_TIMEOUT_MS 3000
+#define REQUEST_COMPLETION_TIMEOUT_MS 10000
 #define CURL_ERROR_SIZE 256
 #define HTTP_OK 200
 #define SERVICE_CALL_PREFIX "https://"

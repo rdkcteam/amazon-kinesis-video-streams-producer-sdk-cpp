@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <queue>
 #include "KinesisVideoProducer.h"
+#include "CachingEndpointOnlyCallbackProvider.h"
 #include <IotCertCredentialProvider.h>
 #include "rdk_debug.h"
 
@@ -84,6 +85,7 @@ namespace com { namespace amazonaws { namespace kinesis { namespace video {
 typedef struct _CustomData {
   _CustomData():
     first_frame(true),
+    firstkeyframetimestamp(0),
     //stream_status(STATUS_SUCCESS),
     base_pts(0),
     max_frame_pts(0),
@@ -107,6 +109,7 @@ typedef struct _CustomData {
     put_frame_failed(false)       
   {
     producer_start_time = chrono::duration_cast<nanoseconds>(systemCurrentTime().time_since_epoch()).count();
+    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d):  producer_start_time is %lld\n", __FILE__, __LINE__,producer_start_time);
   }
 
   //gst components
@@ -130,6 +133,9 @@ typedef struct _CustomData {
 
   // indicate whether a video key frame has been received or not.
   volatile bool first_frame;
+
+  //first keyframe timesatmps in clip
+  uint64_t firstkeyframetimestamp;
 
   // Since each file's timestamp start at 0, need to add all subsequent file's timestamp to base_pts starting from the
   // second file to avoid fragment overlapping. When starting a new putMedia session, this should be set to 0.
@@ -300,10 +306,10 @@ STATUS SampleStreamCallbackProvider::streamConnectionStaleHandler(UINT64 custom_
   LOG_WARN("Reporting stream stale. Last ACK received " << last_buffering_ack);
   CustomData *customDataObj = reinterpret_cast<CustomData *>(custom_data);
   {
-    std::lock_guard<std::mutex> lk(custom_data_mtx);
-    customDataObj->connection_error = true;
     if( customDataObj->mainloop_running ) {
-      LOG_DEBUG("streamConnectionStaleHandler : Main loop quit done" );
+      std::lock_guard<std::mutex> lk(custom_data_mtx);
+      customDataObj->connection_error = true;
+      LOG_ERROR("streamConnectionStaleHandler : Main loop quit done" );
       customDataObj->mainloop_running = false;
       g_main_loop_quit(customDataObj->main_loop);
     }
@@ -327,17 +333,16 @@ SampleStreamCallbackProvider::streamErrorReportHandler(UINT64 custom_data, STREA
   //if (status_code == static_cast<UINT32>(STATUS_DESCRIBE_STREAM_CALL_FAILED) &&
   if (customDataObj->kinesis_video_stream != NULL) {
     {
-      std::lock_guard<std::mutex> lk(custom_data_mtx);
-      customDataObj->connection_error = true;
       if( customDataObj->mainloop_running ) {
-        LOG_DEBUG("streamErrorReportHandler : Main loop quit done" );
+        std::lock_guard<std::mutex> lk(custom_data_mtx);
+        customDataObj->connection_error = true;
+        LOG_ERROR("streamErrorReportHandler : Main loop quit done" );
         customDataObj->mainloop_running = false;
         g_main_loop_quit(customDataObj->main_loop);
+        RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d):  kvsclip upload error %s, %s\n",
+		      __FILE__, __LINE__, customDataObj->clip_name, status_strstrm.str().c_str());
       }
     }
-    RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d):  kvsclip upload error %s, %s\n",
-		__FILE__, __LINE__, customDataObj->clip_name, status_strstrm.str().c_str());
-
   }
   return STATUS_SUCCESS;
 }
@@ -375,7 +380,7 @@ SampleStreamCallbackProvider::FragmentAckReceivedHandler(UINT64 custom_data,STRE
     RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): kvsclip upload successful %s, %lld, %s, %lld \n",
       __FILE__, __LINE__, customDataObj->clip_name, pFragmentAck->timestamp, pFragmentAck->sequenceNumber, time_diff );
 
-    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): kvs upload stats:%lld,%lld \n",__FILE__, __LINE__, avgtime_clipupload,clipcount);
+    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): kvs upload stats:%lld,%lld \n",__FILE__, __LINE__,avgtime_clipupload,clipcount);
     {
       std::lock_guard<std::mutex> lock( customDataObj->clip_upload_mutex_ );
       customDataObj->clip_upload_status_ = true;
@@ -397,10 +402,6 @@ static void kinesis_video_init(CustomData *data, char *stream_name) {
 
   STRNCPY(data->stream_name, stream_name,MAX_STREAM_NAME_LEN);
   data->stream_name[MAX_STREAM_NAME_LEN -1] = '\0';
-  {
-    std::lock_guard<std::mutex> lk(custom_data_mtx);
-    data->stream_in_progress = false;
-  }
   LOG_INFO("kinesis_video_init enter data stream name" << data->stream_name);
 
   unique_ptr<DeviceInfoProvider> device_info_provider = make_unique<SampleDeviceInfoProvider>();
@@ -466,12 +467,29 @@ static void kinesis_video_init(CustomData *data, char *stream_name) {
     LOG_INFO("Using Sample credentials for Kinesis Video Streams");
     credential_provider = make_unique<SampleCredentialProvider>(*credentials_.get());
   }
-
+  
+  //cache callback
+  unique_ptr<DefaultCallbackProvider>
+          cachingEndpointOnlyCallbackProvider = make_unique<CachingEndpointOnlyCallbackProvider>(
+          move(client_callback_provider),
+          move(stream_callback_provider),
+          move(credential_provider),
+          defaultRegionStr,
+          "",
+          "",
+          "",
+          "",
+          DEFAULT_CACHE_UPDATE_PERIOD_IN_SECONDS);
+ 
   data->kinesis_video_producer = KinesisVideoProducer::createSync(move(device_info_provider),
+                                                                      move(cachingEndpointOnlyCallbackProvider));
+  
+
+  /*data->kinesis_video_producer = KinesisVideoProducer::createSync(move(device_info_provider),
                                                                   move(client_callback_provider),
                                                                   move(stream_callback_provider),
                                                                   move(credential_provider),
-                                                                  defaultRegionStr);
+                                                                  defaultRegionStr);*/
 
   LOG_INFO("Kinesis Video Streams Client is ready");
 }
@@ -534,6 +552,10 @@ static void kinesis_video_stream_init(CustomData *data) {
   } else {
     LOG_INFO("Kinesis video stream init video case");
     data->kinesis_video_stream = data->kinesis_video_producer->createStreamSync(move(stream_definition));
+    {
+      std::lock_guard<std::mutex> lk(custom_data_mtx);
+      data->stream_in_progress = false;
+    }
   }
 
   // since we are starting new putMedia, timestamp need not be padded.
@@ -552,25 +574,26 @@ static void kinesis_video_stream_init(CustomData *data) {
 
 //kvs video stream uninit
 void kinesis_video_stream_uninit(CustomData *data) {
-
-  LOG_INFO("kinesis_video_stream_uninit - Enter");
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream uninit started\n", __FILE__, __LINE__);
   if (data->kinesis_video_stream != NULL) {
+    //LOG_INFO("kinesis_video_stream_uninit - Enter");
     data->kinesis_video_stream->stopSync();
     data->kinesis_video_producer->freeStream(data->kinesis_video_stream);
     data->kinesis_video_stream = NULL;
-    }
-  LOG_INFO("kinesis_video_stream_uninit - Exit");
+    //LOG_INFO("kinesis_video_stream_uninit - Exit");
+  }
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream uninit done\n", __FILE__, __LINE__);
 }
 
 //recreate stream
 static void recreate_stream(CustomData *data) {
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : Attempt to recreate kinesis video stream \n", __FILE__, __LINE__);
   kinesis_video_stream_uninit(data);
   //sleep required between free stream and recreate stream to avoid crash
   this_thread::sleep_for(std::chrono::seconds(5));
   bool do_repeat = true;
   int retry=0;
   do {
-      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : Attempt to recreate kinesis video stream \n", __FILE__, __LINE__);
       try {
         kinesis_video_stream_init(data);
         do_repeat = false;
@@ -622,13 +645,14 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
  GstFlowReturn ret = GST_FLOW_OK;
  GstBuffer *buffer;
  size_t buffer_size;
+ bool delta, dropFrame;
 
  if (!data->stream_in_progress) {
    data->stream_in_progress = true;
    const GValue *gstStreamFormat = gst_structure_get_value(gststructforcaps, "codec_data");
    gchar *cpd = gst_value_serialize(gstStreamFormat);
    data->kinesis_video_stream->start(std::string(cpd));
-   LOG_INFO("adding codec private data");
+   LOG_INFO("video only case : adding codec private data : " << cpd );
    g_free(cpd);
  }
 
@@ -644,23 +668,22 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
 
    GstBuffer *buffer = gst_sample_get_buffer(sample);
    size_t buffer_size = gst_buffer_get_size(buffer);
+   
+   dropFrame =  GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_CORRUPTED) ||
+                 GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DECODE_ONLY) ||
+                 (GST_BUFFER_FLAGS(buffer) == GST_BUFFER_FLAG_DISCONT) ||
+                 (!GST_BUFFER_PTS_IS_VALID(buffer)); //frame with invalid pts cannot be processed.
+    if (dropFrame) {
+      if (!GST_BUFFER_PTS_IS_VALID(buffer)) {
+          LOG_WARN("on_new_sample : Dropping frame due to invalid presentation timestamp.");
+      } else {
+          LOG_WARN("on_new_sample : Dropping invalid frame.");
+      }
+      goto Cleanup;
+    }
 
    FRAME_FLAGS kinesis_video_flags = FRAME_FLAG_NONE;
-   bool isDroppable, isHeader;
    bool delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
-
-   if (!delta) {
-     if (data->first_frame) {
-       // start cutting fragment at second video key frame because we can have audio frames before first video key frame
-       data->first_frame = false;
-       kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
-     } else {
-       //std::cout << "Not setting key frames for this clip again";
-       kinesis_video_flags = FRAME_FLAG_NONE;
-     }
-   } else {
-     kinesis_video_flags = FRAME_FLAG_NONE;
-   }
 
    if (buffer_size > data->frame_data_size) {
      delete[] data->frame_data;
@@ -672,6 +695,8 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
    if( ! data->gkvsclip_abstime ) {
     uint64_t current_pts = buffer->pts;
 
+    LOG_DEBUG("buffer_pts from gst pipeline "<<  buffer->pts );
+
     data->max_frame_pts = MAX(data->max_frame_pts, buffer->pts);
 
     // make sure the timestamp is continuous across multiple clips
@@ -682,6 +707,20 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
       //std::cout << "Skipping current " << buffer->pts << " frame time code less than previous " << data->max_frame_pts << std::endl;
       goto Cleanup;
     }
+   }
+
+  //store key frame timestamps
+   if (!delta) {
+    if (data->first_frame) {
+      data->first_frame = false;
+      data->firstkeyframetimestamp = buffer->pts;
+      kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
+    }else {
+      //std::cout << "Not setting key frames for this clip again";
+      kinesis_video_flags = FRAME_FLAG_NONE;
+     }
+   } else {
+    kinesis_video_flags = FRAME_FLAG_NONE;
    }
 
    //std::cout << "buffer_pts videoonly " << buffer->pts << std::endl;
@@ -698,9 +737,9 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
       gst_sample_unref(sample);
       {
         std::lock_guard<std::mutex> lk(custom_data_mtx);
-        data->connection_error = true;      
+        data->connection_error = true;
         if( data->mainloop_running ) {
-          LOG_DEBUG("put_frame error : Main loop quit done" );
+          LOG_ERROR("put_frame error : Main loop quit done" );
           data->mainloop_running = false;
           g_main_loop_quit(data->main_loop);
         }
@@ -714,7 +753,7 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
         std::lock_guard<std::mutex> lk(custom_data_mtx);
         data->connection_error = true;      
         if( data->mainloop_running ) {
-          LOG_DEBUG("put_frame runtime error : Main loop quit done" );
+          LOG_ERROR("put_frame runtime error : Main loop quit done" );
           data->mainloop_running = false;
           g_main_loop_quit(data->main_loop);
         }
@@ -793,7 +832,7 @@ static gboolean cb_message(GstBus *bus, GstMessage *msg, gpointer newdata) {
       g_free(debug);
 
       if( data->mainloop_running ) {
-        LOG_DEBUG("cb_message_GST_MESSAGE_ERROR : Main loop quit done" );
+        LOG_ERROR("cb_message_GST_MESSAGE_ERROR : Main loop quit done" );
         data->mainloop_running = false;
         g_main_loop_quit(data->main_loop);
       }
@@ -823,7 +862,7 @@ static gboolean cb_message(GstBus *bus, GstMessage *msg, gpointer newdata) {
       LOG_DEBUG("message : GST_MESSAGE_CLOCK_LOST.");
       
       if( data->mainloop_running ) {
-        LOG_DEBUG("cb_message_GST_MESSAGE_EOS : Main loop quit done" );
+        LOG_ERROR("cb_message_GST_MESSAGE_CLOCK_LOST : Main loop quit done" );
         data->mainloop_running = false;
         g_main_loop_quit(data->main_loop);
       }
@@ -917,6 +956,10 @@ static int video_pipeline_init() {
   /* Configure source and appsink */
   //g_object_set(G_OBJECT (data.source), "blocksize", 655356, NULL);
   //g_object_set(G_OBJECT (data.source), "blocksize", 4096, NULL);
+
+  //source property - 128k
+  g_object_set(G_OBJECT (data.source), "blocksize", 131072, NULL);
+
   if ( ! data.gkvsclip_livemode ) {
     g_object_set(G_OBJECT (data.appsink), "emit-signals", TRUE, "sync", FALSE, NULL); // offline mode
   } else {
@@ -1054,6 +1097,7 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
         const GValue *gstStreamFormat = gst_structure_get_value(gststructforcaps, "codec_data");
         gchar *cpd = gst_value_serialize(gstStreamFormat);
         data->kinesis_video_stream->start(std::string(cpd), track_id);
+        LOG_INFO("video audio case : adding codec private data : " << cpd );
         g_free(cpd);
 
         // block pipeline until cpd for all tracks have been received. Otherwise we will get STATUS_INVALID_STREAM_STATE
@@ -1081,27 +1125,15 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
                  (!GST_BUFFER_PTS_IS_VALID(buffer)); //frame with invalid pts cannot be processed.
     if (dropFrame) {
         if (!GST_BUFFER_PTS_IS_VALID(buffer)) {
-            LOG_WARN("Dropping frame due to invalid presentation timestamp.");
+            LOG_WARN("on_new_sample_av : Dropping frame due to invalid presentation timestamp.");
         } else {
-            LOG_WARN("Dropping invalid frame.");
+            LOG_WARN("on_new_sample_av : Dropping invalid frame.");
         }
         goto CleanUp;
     }
 
     delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
     kinesis_video_flags = FRAME_FLAG_NONE;
-
-#if 0
-    if (!delta && track_id == DEFAULT_VIDEO_TRACKID) {
-      if (data->first_frame) {
-        // start cutting fragment at second video key frame because we can have audio frames before first video key frame
-        data->first_frame = false;
-      } else {
-        LOG_INFO("Setting frame as key frame");
-        kinesis_video_flags = FRAME_FLAG_KEY_FRAME;
-      }
-    }
-#endif
 
     {
       if (!data->putFrameHelper->putFrameFailed()) {
@@ -1121,10 +1153,21 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
         //buffer->dts = buffer->pts;
         buffer->dts = 0;
 
+        LOG_DEBUG("buffer_pts video_audio " <<  buffer->pts << " track_id  " << track_id );
+
         /*if (data->max_frame_pts > current_pts) {
           //std::cout << "Skipping current " << buffer->pts << " frame time code less than previous " << data->max_frame_pts << std::endl;
           goto CleanUp;
         }*/
+      }
+
+
+      if (!delta && track_id == DEFAULT_VIDEO_TRACKID) {
+        if (data->first_frame) {
+        // start cutting fragment at second video key frame because we can have audio frames before first video key frame
+        data->first_frame = false;
+        data->firstkeyframetimestamp = buffer->pts;
+      }
       }
       //std::cout << "buffer_pts audio_video " << buffer->pts << " track_id  " << track_id << std::endl;
       //std::cout << "buffer_dts audio_video " << buffer->dts << std::endl;
@@ -1134,8 +1177,29 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
           data->key_frame_pts = buffer->pts;
       }*/
     }
+#if 0
+    //current buffer level in queue
+    guint video_level_buffer;
+    guint video_level_bytes;
 
-    LOG_DEBUG("getFrameDataBuffer buffer_size " <<  buffer_size << " track_id  " << track_id );
+    //g_print("Current video queue buffer level : %u", data->video_queue->get_property("current-level-buffers" ) );
+    g_object_get (G_OBJECT (data->video_queue), "current-level-buffers", &video_level_buffer, NULL);
+    g_object_get (G_OBJECT (data->video_queue), "current-level-bytes", &video_level_bytes, NULL);
+
+    g_print("Current video queue level buffer : %u\n", video_level_buffer );
+    g_print("Current video queue level bytes  : %u\n", video_level_bytes );
+
+    guint audio_level_buffer;
+    guint audio_level_bytes;
+
+    g_object_get (G_OBJECT (data->audio_queue), "current-level-buffers", &audio_level_buffer, NULL);
+    g_object_get (G_OBJECT (data->audio_queue), "current-level-bytes", &audio_level_bytes, NULL);
+
+    g_print("Current audio queue level buffer : %u\n", audio_level_buffer );
+    g_print("Current audio queue level bytes  : %u\n", audio_level_bytes );
+#endif
+
+    //LOG_DEBUG("getFrameDataBuffer buffer_size " <<  buffer_size << " track_id  " << track_id );
     data_buffer = data->putFrameHelper->getFrameDataBuffer(buffer_size, track_id == DEFAULT_VIDEO_TRACKID);
     // if there is too much drift between audio and video, block one of the stream.
     if (data_buffer == nullptr) {
@@ -1339,6 +1403,13 @@ int video_audio_pipeline_init() {
       g_printerr("video_queue element could not be created:\n");
     }
 
+#if 0
+    g_object_set(G_OBJECT (data.audio_queue), "max-size-buffers", 100, "max-size-bytes", 1048576, NULL);
+    g_object_set(G_OBJECT (data.video_queue), "max-size-buffers", 100, "max-size-bytes", 1048576, NULL);
+    g_object_set(G_OBJECT (data.appsink_video), "drop", TRUE, "max-buffers", 512, NULL);
+    g_object_set(G_OBJECT (data.appsink_audio), "drop", TRUE, "max-buffers", 512, NULL);
+#endif
+
     data.pipeline = gst_pipeline_new("audio-video-kinesis-pipeline");
 
     if (!data.pipeline || !data.appsink_video || !data.appsink_audio || !data.video_queue || !data.audio_queue || !data.video_filter || !data.audio_filter) {
@@ -1346,8 +1417,12 @@ int video_audio_pipeline_init() {
         return 1;
     }
 
+
     data.source = gst_element_factory_make("filesrc", "source");
     //g_object_set(G_OBJECT (filesrc), "location", file_path.c_str(), NULL);
+    //source property - 128k
+    g_object_set(G_OBJECT (data.source), "blocksize", 131072, NULL);
+
     data.tsdemux = gst_element_factory_make("tsdemux", "tsdemux");
     g_object_set(G_OBJECT (data.tsdemux), "name", "ts", NULL);
 
@@ -1468,18 +1543,19 @@ int kvs_stream_init( unsigned short& kvsclip_audio, unsigned short& kvsclip_abst
   //Ensure video pipeline is deleted before stream init
   //Initilaize gst pipeline once for application if absolute timestamp is enabled
   if(data.gkvsclip_abstime) {
+    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Absolute time is enabled\n", __FILE__, __LINE__);
     if (isgstinitdone == false) {
       if(data.gkvsclip_audio) {
         ret = video_audio_pipeline_init();
         if( 0 != ret ) {
           RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): Error in videoaudio pipeline initilaiztion :%d\n", __FILE__, __LINE__,data.gkvsclip_abstime);
-          return -1;
+          return 3;
         }
       } else {
         ret = video_pipeline_init();
         if( 0 != ret ) {
           RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): Error in video pipeline initilaiztion :%d\n", __FILE__, __LINE__,data.gkvsclip_abstime );
-          return -1;
+          return 3;
         }
       }
       isgstinitdone = true;
@@ -1528,7 +1604,7 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
     connection_error = data.connection_error;
   }
 
-  LOG_DEBUG("GStreamer_start - clip name is :" << clip << " connection_error :" << connection_error );
+  LOG_DEBUG("kvs_stream_play - clip name is :" << clip << " connection_error :" << connection_error );
 
   STRNCPY(data.clip_name, clip,MAX_STREAM_NAME_LEN);
   data.clip_name[MAX_STREAM_NAME_LEN -1] = '\0';
@@ -1553,14 +1629,15 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
       }
   }
 
-  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline init done %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+  //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline init done %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
 
   //reset state
   data.first_frame = true;
+  data.firstkeyframetimestamp = 0;
 
   g_object_set(G_OBJECT (data.source), "location", data.clip_name, NULL);
 
-  LOG_DEBUG("GStreamer_start - changing gstreamer pipeline to play state");
+  LOG_DEBUG("kvs_stream_play - changing gstreamer pipeline to play state");
   
   /* start streaming */
   ret = gst_element_set_state(data.pipeline, GST_STATE_PLAYING);
@@ -1577,7 +1654,7 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
   }
   
   //LOG_DEBUG("GStreamer_start - After changing gstreamer pipeline to play state");
-  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline state changed to playing %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+  //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline state changed to playing %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
 
 
   //null check for main loop
@@ -1590,16 +1667,27 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
   data.mainloop_running = true;
   g_main_loop_run(data.main_loop);
 
-  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): put media main loop finished for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+  uint64_t startts = data.producer_start_time;
+  uint64_t firsframetts = data.firstkeyframetimestamp;
+  auto starttstp = system_clock::time_point{nanoseconds{startts}};
+  auto firsframettstp = system_clock::time_point{nanoseconds{firsframetts}};
+  std::time_t starttstp_epochts = std::chrono::system_clock::to_time_t(starttstp);
+  std::time_t firsframettstp_epochts = std::chrono::system_clock::to_time_t(firsframettstp);
+
+#if 0
+  std::string starttstpstring (std::ctime(&starttstp_epochts) );
+  std::string firsframettstpstring (std::ctime(&firsframettstp_epochts) );
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): put media main loop finished producerts,firstkeyframets:%ld,%ld,%s,%s\n",
+          __FILE__, __LINE__,starttstp_epochts,firsframettstp_epochts,starttstpstring.substr(0,starttstpstring.length()-1).c_str(),firsframettstpstring.substr(0,firsframettstpstring.length()-1).c_str() );
+#endif
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): put media main loop finished producerts,firstkeyframets:%ld,%ld\n",__FILE__, __LINE__,starttstp_epochts,firsframettstp_epochts);
   
-#if 1
   if( ! data.gkvsclip_abstime ) {
     // bookkeeping base_pts. add 1ms to avoid overlap.
     data.base_pts = data.base_pts + data.max_frame_pts + duration_cast<nanoseconds>(milliseconds(1)).count();
     data.max_frame_pts = 0;
     LOG_DEBUG("GStreamer_start : base_pts : " << data.base_pts << " max_frame_pts : " << data.max_frame_pts );
   }
-#endif
 
   //update timestamp 
   data.clip_senttokvssdk_time = chrono::duration_cast<milliseconds>(systemCurrentTime().time_since_epoch()).count();
@@ -1615,39 +1703,34 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
   }
 
   //LOG_INFO("=======================gstreamer_start_Main_Loop_Finish_gst_Uninit=========================Memory stats (KB) " << compute_stats() );
-  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): pipeline uninit complete for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+  //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): pipeline uninit complete for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
 
   if( data.streaming_type == STREAMING_TYPE_OFFLINE ) {
     RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): Awaiting for the upload status... \n", __FILE__, __LINE__);
     unique_lock<mutex> lock(data.clip_upload_mutex_);
-    do {
-        if (!data.clip_upload_status_var_.wait_for(lock,
-                                                          std::chrono::seconds(
-                                                                  CLIPUPLOAD_READY_TIMEOUT_DURATION_IN_SECONDS),
-                                                          []() {
-                                                              RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): signal received - return - %d \n", __FILE__, __LINE__,data.clip_upload_status_);
-                                                              return data.clip_upload_status_;
-                                                          })) {
-            RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): Failed to get clip upload status - Timeout \n", __FILE__, __LINE__);
-      	    RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): kvsclip upload failed %s \n",__FILE__, __LINE__, data.clip_name );
-            {
-              std::lock_guard<std::mutex> lk(custom_data_mtx);
-              data.connection_error = true;
-            }
-            break;
+    if (!data.clip_upload_status_var_.wait_for(lock,
+                                                      std::chrono::seconds(
+                                                              CLIPUPLOAD_READY_TIMEOUT_DURATION_IN_SECONDS),
+                                                      []() {
+                                                          RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): signal received - return - %d \n", __FILE__, __LINE__,data.clip_upload_status_);
+                                                          return data.clip_upload_status_;
+                                                      })) {
+        RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): Failed to get clip upload status - Timeout \n", __FILE__, __LINE__);
+      	RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): kvsclip upload failed %s \n",__FILE__, __LINE__, data.clip_name );
+        {
+          std::lock_guard<std::mutex> lk(custom_data_mtx);
+          data.connection_error = true;
         }
+    }
         
-        if (data.clip_upload_status_) {
-          RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): clip upload status success. \n", __FILE__, __LINE__);
-          data.clip_upload_status_ = false;
-          {
-            std::lock_guard<std::mutex> lk(custom_data_mtx);
-            data.connection_error = false;
-          }
-          break;
-        }
-
-    } while (true);
+    if (data.clip_upload_status_) {
+      RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): clip upload status success. \n", __FILE__, __LINE__);
+      data.clip_upload_status_ = false;
+      {
+        std::lock_guard<std::mutex> lk(custom_data_mtx);
+        data.connection_error = false;
+      }
+    }
   }
  
   //check any connection error during kinesis upload after gst main loop exits
@@ -1682,7 +1765,8 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
     recreate_stream(&data);
   
     //LOG_INFO("=======================Main_Loop_Finish_ConnError_KvsReInit=========================Memory stats (KB) " << compute_stats() ) ;
-    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): stream was recreated for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+    //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): stream was recreated for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): stream was recreated for clip %s\n", __FILE__, __LINE__, data.clip_name);
     {
       std::lock_guard<std::mutex> lk(custom_data_mtx);
       connection_error = data.connection_error;

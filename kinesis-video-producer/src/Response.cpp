@@ -95,6 +95,9 @@ shared_ptr<Response> Response::create(Request &request) {
     curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_TIME, 30L);
     curl_easy_setopt(response->curl_, CURLOPT_LOW_SPEED_LIMIT, 30L);
 
+    //force ipv4
+    curl_easy_setopt(response->curl_, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+
     // add headers
     for (HeaderMap::const_iterator i = request.getHeaders().begin(); i != request.getHeaders().end(); ++i) {
         std::ostringstream oss;

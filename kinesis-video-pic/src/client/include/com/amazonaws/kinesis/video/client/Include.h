@@ -312,14 +312,14 @@ extern "C" {
 #define MIN_VIEW_BUFFER_DURATION     (MAX(MIN_BUFFER_DURATION_IN_SECONDS * HUNDREDS_OF_NANOS_IN_A_SECOND, MIN_CONTENT_VIEW_BUFFER_DURATION))
 
 /**
- * Service call default timeout - 5 seconds
+ * Service call default timeout - 10 seconds
  */
-#define SERVICE_CALL_DEFAULT_TIMEOUT            (5 * HUNDREDS_OF_NANOS_IN_A_SECOND)
+#define SERVICE_CALL_DEFAULT_TIMEOUT            (10 * HUNDREDS_OF_NANOS_IN_A_SECOND)
 
 /**
  * Default service call retry count
  */
-#define SERVICE_CALL_MAX_RETRY_COUNT           5
+#define SERVICE_CALL_MAX_RETRY_COUNT           3
 
 /**
  * Service call retry timeout - 100ms

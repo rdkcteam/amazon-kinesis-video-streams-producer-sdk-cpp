@@ -69,6 +69,8 @@ void IotCertCredentialProvider::updateCredentials(Credentials &credentials) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+    //force ipv4
+    curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
     long completion_timeout = (long)std::chrono::milliseconds(REQUEST_COMPLETION_TIMEOUT_MS).count();
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, completion_timeout);
 

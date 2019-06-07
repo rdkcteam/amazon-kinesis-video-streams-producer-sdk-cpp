@@ -18,7 +18,7 @@ namespace com { namespace amazonaws { namespace kinesis { namespace video {
  * Stream stop timeout duration.
  * This needs to be extended to allow post stream stop stream.
  **/
-#define STREAM_CLOSED_TIMEOUT_DURATION_IN_SECONDS 120
+#define STREAM_CLOSED_TIMEOUT_DURATION_IN_SECONDS 30
 
 #define DEBUG_DUMP_FRAME_INFO "DEBUG_DUMP_FRAME_INFO"
 

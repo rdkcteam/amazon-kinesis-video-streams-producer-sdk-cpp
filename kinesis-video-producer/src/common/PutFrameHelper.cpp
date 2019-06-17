@@ -23,6 +23,7 @@ PutFrameHelper::PutFrameHelper(
     put_frame_status(true),
     eofr_put(false) {
 
+    LOG_ERROR("PutFrameHelper Construct");
     for(uint32_t i = 0; i < MAX_VIDEO_QUEUE_SIZE; i++) {
         FrameDataBuffer frameDataBuffer;
         frameDataBuffer.size = INITIAL_BUFFER_SIZE_VIDEO;
@@ -176,6 +177,7 @@ void PutFrameHelper::putEofr() {
 }
 
 PutFrameHelper::~PutFrameHelper() {
+    LOG_ERROR("PutFrameHelper Destruct");
     for(uint32_t i = 0; i < MAX_VIDEO_QUEUE_SIZE; i++) {
         delete [] video_data_buffers[i].buffer;
     }

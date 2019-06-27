@@ -42,7 +42,7 @@ LOGGER_TAG("com.amazonaws.kinesis.video.gstreamer");
 #define SESSION_TOKEN_ENV_VAR "AWS_SESSION_TOKEN"
 #define KVS_LOG_CONFIG_ENV_VER "KVS_LOG_CONFIG"
 #define KVSINITMAXRETRY 5
-#define CLIPUPLOAD_READY_TIMEOUT_DURATION_IN_SECONDS 20
+#define CLIPUPLOAD_READY_TIMEOUT_DURATION_IN_SECONDS 25
 #define CLIPUPLOAD_MAX_TIMEOUT_DURATION_IN_MILLISECOND 15000
 
 //Kinesis Video Stream definitions
@@ -103,10 +103,12 @@ typedef struct _CustomData {
     gkvsclip_livemode(0),
     kinesis_video_stream(nullptr),
     //audio related params
+    putFrameHelper(nullptr),
     eos_triggered(false),
     pipeline_blocked(false),
     total_track_count(1),
-    put_frame_failed(false)       
+    put_frame_failed(false),
+    put_frame_flushed(false)
   {
     producer_start_time = chrono::duration_cast<nanoseconds>(systemCurrentTime().time_since_epoch()).count();
     RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d):  producer_start_time is %lld\n", __FILE__, __LINE__,producer_start_time);
@@ -192,6 +194,9 @@ typedef struct _CustomData {
 
   // whether putFrameHelper has reported a putFrame failure.
   atomic_bool put_frame_failed;
+
+  // whether putFrameHelper flush done
+  atomic_bool put_frame_flushed ;
 
   // key:     trackId
   // value:   whether application has received the first frame for trackId.
@@ -469,7 +474,7 @@ static void kinesis_video_init(CustomData *data, char *stream_name) {
   }
   
   //cache callback
-  unique_ptr<DefaultCallbackProvider>
+  /*unique_ptr<DefaultCallbackProvider>
           cachingEndpointOnlyCallbackProvider = make_unique<CachingEndpointOnlyCallbackProvider>(
           move(client_callback_provider),
           move(stream_callback_provider),
@@ -482,14 +487,13 @@ static void kinesis_video_init(CustomData *data, char *stream_name) {
           DEFAULT_CACHE_UPDATE_PERIOD_IN_SECONDS);
  
   data->kinesis_video_producer = KinesisVideoProducer::createSync(move(device_info_provider),
-                                                                      move(cachingEndpointOnlyCallbackProvider));
-  
+                                                                      move(cachingEndpointOnlyCallbackProvider));*/
 
-  /*data->kinesis_video_producer = KinesisVideoProducer::createSync(move(device_info_provider),
+  data->kinesis_video_producer = KinesisVideoProducer::createSync(move(device_info_provider),
                                                                   move(client_callback_provider),
                                                                   move(stream_callback_provider),
                                                                   move(credential_provider),
-                                                                  defaultRegionStr);*/
+                                                                  defaultRegionStr);
 
   LOG_INFO("Kinesis Video Streams Client is ready");
 }
@@ -573,11 +577,22 @@ static void kinesis_video_stream_init(CustomData *data) {
 }
 
 //kvs video stream uninit
-void kinesis_video_stream_uninit(CustomData *data) {
+void kinesis_video_stream_uninit(CustomData *data, uint64_t& hangdetecttime) {
   RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream uninit started\n", __FILE__, __LINE__);
   if (data->kinesis_video_stream != NULL) {
     //LOG_INFO("kinesis_video_stream_uninit - Enter");
+    if ( ( data->gkvsclip_audio ) && ( nullptr != data->putFrameHelper ) ) {
+      // signal putFrameHelper to release all frames still in queue.
+      hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush\n", __FILE__, __LINE__);
+      if( !data->put_frame_flushed.load() ) 
+      {
+        data->putFrameHelper->flush();
+        data->put_frame_flushed = true;
+      }
+    }
     data->kinesis_video_stream->stopSync();
+    hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     data->kinesis_video_producer->freeStream(data->kinesis_video_stream);
     data->kinesis_video_stream = NULL;
     //LOG_INFO("kinesis_video_stream_uninit - Exit");
@@ -586,15 +601,18 @@ void kinesis_video_stream_uninit(CustomData *data) {
 }
 
 //recreate stream
-static void recreate_stream(CustomData *data) {
+static void recreate_stream(CustomData *data, uint64_t& hangdetecttime) {
   RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : Attempt to recreate kinesis video stream \n", __FILE__, __LINE__);
-  kinesis_video_stream_uninit(data);
+  hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+  kinesis_video_stream_uninit(data,hangdetecttime);
+  hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
   //sleep required between free stream and recreate stream to avoid crash
-  this_thread::sleep_for(std::chrono::seconds(5));
+  this_thread::sleep_for(std::chrono::seconds(3));
   bool do_repeat = true;
   int retry=0;
   do {
       try {
+        hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         kinesis_video_stream_init(data);
         do_repeat = false;
       } catch (runtime_error &err) {
@@ -1107,9 +1125,18 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
             });
 
             if(!all_stream_started(data)) {
-                LOG_ERROR("Drift between audio and video is above threshold");
-                ret = GST_FLOW_ERROR;
-                goto CleanUp;
+                LOG_ERROR("getcpd : Drift between audio and video is above threshold");
+                gst_sample_unref(sample);
+                {
+                  std::lock_guard<std::mutex> lk(custom_data_mtx);
+                  data->connection_error = true;
+                  if( data->mainloop_running ) {
+                    LOG_ERROR("getcpd : Main loop quit done" );
+                    data->mainloop_running = false;
+                    g_main_loop_quit(data->main_loop);
+                  }
+                }
+                return GST_FLOW_OK;
             }
         } else {
             data->audio_video_sync_cv.notify_all();
@@ -1209,9 +1236,18 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
           return data_buffer != nullptr;
       });
       if (data_buffer == nullptr) {
-          LOG_ERROR("Drift between audio and video is above threshold");
-          ret = GST_FLOW_ERROR;
-          goto CleanUp;
+          LOG_ERROR("getFrameDataBuffer : Drift between audio and video is above threshold");
+          gst_sample_unref(sample);
+          {
+            std::lock_guard<std::mutex> lk(custom_data_mtx);
+            data->connection_error = true;
+            if( data->mainloop_running ) {
+              LOG_ERROR("getFrameDataBuffer : Main loop quit done" );
+              data->mainloop_running = false;
+              g_main_loop_quit(data->main_loop);
+            }
+          }
+          return GST_FLOW_OK;
       }
       data->pipeline_blocked = false;
     }
@@ -1276,10 +1312,16 @@ static void eos_cb_av(GstElement *sink, CustomData *data) {
 #endif
 
     // signal putFrameHelper to release all frames still in queue.
-    data->putFrameHelper->flush();
-    if (!data->putFrameHelper->putFrameFailed()) {
+    if( !data->put_frame_flushed.load() ) 
+    {
+      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush called in EOS\n", __FILE__, __LINE__);
+      data->putFrameHelper->flush();
+      if (!data->putFrameHelper->putFrameFailed()) {
         LOG_ERROR("Putframe error detected.");
         data->put_frame_failed = true;
+      }
+      data->put_frame_flushed = true;
+      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush complete in EOS\n", __FILE__, __LINE__);
     }
     
     data->putFrameHelper->putEofr();
@@ -1517,7 +1559,7 @@ int kvs_init() {
 }
 
 //kvs_video_stream init
-int kvs_stream_init( unsigned short& kvsclip_audio, unsigned short& kvsclip_abstime, unsigned short& kvsclip_livemode ) {
+int kvs_stream_init( unsigned short& kvsclip_audio, unsigned short& kvsclip_abstime, unsigned short& kvsclip_livemode, unsigned short& contentchangestatus, uint64_t& hangdetecttime ) {
   LOG_INFO("kvs_stream_init - Enter");
   
   static bool isgstinitdone = false;
@@ -1534,16 +1576,17 @@ int kvs_stream_init( unsigned short& kvsclip_audio, unsigned short& kvsclip_abst
     data.total_track_count = 1;
   }
 
-  //ensure gst pipeline is deleted in case it's initilaized before
-  if ( true == isgstinitdone ) {
-    video_pipeline_uninit();
-    isgstinitdone = false;
-  }
-
   //Ensure video pipeline is deleted before stream init
   //Initilaize gst pipeline once for application if absolute timestamp is enabled
   if(data.gkvsclip_abstime) {
     RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Absolute time is enabled\n", __FILE__, __LINE__);
+    
+    //ensure gst pipeline is deleted in case it's initilaized before
+    if ( true == isgstinitdone ) {
+      video_pipeline_uninit();
+      isgstinitdone = false;
+    }
+
     if (isgstinitdone == false) {
       if(data.gkvsclip_audio) {
         ret = video_audio_pipeline_init();
@@ -1562,16 +1605,21 @@ int kvs_stream_init( unsigned short& kvsclip_audio, unsigned short& kvsclip_abst
     }
   }
   
-  //init kinesis stream
-  try {
-    kinesis_video_stream_init(&data);
-  } catch (runtime_error &err) {
-    {
-      std::lock_guard<std::mutex> lk(custom_data_mtx);
-      data.connection_error = true;
+  //In normal case init then recreate
+  if( 0 == contentchangestatus ) {
+    //init kinesis stream
+    try {
+      kinesis_video_stream_init(&data);
+    } catch (runtime_error &err) {
+      {
+        std::lock_guard<std::mutex> lk(custom_data_mtx);
+        data.connection_error = true;
+      }
+      RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): Time out error in kinesis_video_stream_init connection_error %d \n", __FILE__, __LINE__, data.connection_error );
+      recreate_stream(&data,hangdetecttime);
     }
-    RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): Time out error in kinesis_video_stream_init connection_error %d \n", __FILE__, __LINE__, data.connection_error );
-    recreate_stream(&data);
+  } else { //in content change recreate stream
+    recreate_stream(&data,hangdetecttime);
   }
 
   {
@@ -1584,8 +1632,7 @@ int kvs_stream_init( unsigned short& kvsclip_audio, unsigned short& kvsclip_abst
 
 //kvs_stream_play
 /* For every video clip create the pipeline, set the  GStreamer pipeline to playing state and stop the pipeline */
-int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& clip_abstime, unsigned short& clip_livemode ) {
-
+int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& clip_abstime, unsigned short& clip_livemode, uint64_t& hangdetecttime ) {
   bool connection_error = false;
 
   unsigned short clipaudioflag = clip_audio;
@@ -1631,9 +1678,10 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
 
   //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline init done %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
 
-  //reset state
+  //reset states
   data.first_frame = true;
   data.firstkeyframetimestamp = 0;
+  data.put_frame_flushed = false;
 
   g_object_set(G_OBJECT (data.source), "location", data.clip_name, NULL);
 
@@ -1664,6 +1712,8 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
   }
   LOG_DEBUG("GStreamer_start - After creating main loop");
   
+  hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
   data.mainloop_running = true;
   g_main_loop_run(data.main_loop);
 
@@ -1680,6 +1730,7 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
   RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): put media main loop finished producerts,firstkeyframets:%ld,%ld,%s,%s\n",
           __FILE__, __LINE__,starttstp_epochts,firsframettstp_epochts,starttstpstring.substr(0,starttstpstring.length()-1).c_str(),firsframettstpstring.substr(0,firsframettstpstring.length()-1).c_str() );
 #endif
+  hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
   RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): put media main loop finished producerts,firstkeyframets:%ld,%ld\n",__FILE__, __LINE__,starttstp_epochts,firsframettstp_epochts);
   
   if( ! data.gkvsclip_abstime ) {
@@ -1689,9 +1740,8 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
     LOG_DEBUG("GStreamer_start : base_pts : " << data.base_pts << " max_frame_pts : " << data.max_frame_pts );
   }
 
-  //update timestamp 
+  //update timestamp
   data.clip_senttokvssdk_time = chrono::duration_cast<milliseconds>(systemCurrentTime().time_since_epoch()).count();
-
   //std::cout << "data.clip_senttokvssdk_time : " << data.clip_senttokvssdk_time << std::endl;
   
   if(data.gkvsclip_abstime) {
@@ -1708,29 +1758,36 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
   if( data.streaming_type == STREAMING_TYPE_OFFLINE ) {
     RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): Awaiting for the upload status... \n", __FILE__, __LINE__);
     unique_lock<mutex> lock(data.clip_upload_mutex_);
-    if (!data.clip_upload_status_var_.wait_for(lock,
-                                                      std::chrono::seconds(
-                                                              CLIPUPLOAD_READY_TIMEOUT_DURATION_IN_SECONDS),
-                                                      []() {
-                                                          RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): signal received - return - %d \n", __FILE__, __LINE__,data.clip_upload_status_);
-                                                          return data.clip_upload_status_;
-                                                      })) {
-        RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): Failed to get clip upload status - Timeout \n", __FILE__, __LINE__);
-      	RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): kvsclip upload failed %s \n",__FILE__, __LINE__, data.clip_name );
-        {
-          std::lock_guard<std::mutex> lk(custom_data_mtx);
-          data.connection_error = true;
+    do {
+        if (!data.clip_upload_status_var_.wait_for(lock,
+                                                          std::chrono::seconds(
+                                                                  CLIPUPLOAD_READY_TIMEOUT_DURATION_IN_SECONDS),
+                                                          []() {
+                                                              RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): signal received - return - %d \n", __FILE__, __LINE__,data.clip_upload_status_);
+                                                              return data.clip_upload_status_;
+                                                          })) {
+            hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+            RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): Failed to get clip upload status - Timeout \n", __FILE__, __LINE__);
+      	    RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): kvsclip upload failed %s \n",__FILE__, __LINE__, data.clip_name );
+            {
+              std::lock_guard<std::mutex> lk(custom_data_mtx);
+              data.connection_error = true;
+            }
+            break;
         }
-    }
         
-    if (data.clip_upload_status_) {
-      RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): clip upload status success. \n", __FILE__, __LINE__);
-      data.clip_upload_status_ = false;
-      {
-        std::lock_guard<std::mutex> lk(custom_data_mtx);
-        data.connection_error = false;
-      }
-    }
+        if (data.clip_upload_status_) {
+          RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): clip upload status success. \n", __FILE__, __LINE__);
+          data.clip_upload_status_ = false;
+          {
+            std::lock_guard<std::mutex> lk(custom_data_mtx);
+            data.connection_error = false;
+          }
+          break;
+        }
+
+    } while (true);
   }
  
   //check any connection error during kinesis upload after gst main loop exits
@@ -1762,7 +1819,7 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
     LOG_INFO(" KVS : Data upload failed");
 
     //recreate stream in error cases
-    recreate_stream(&data);
+    recreate_stream(&data,hangdetecttime);
   
     //LOG_INFO("=======================Main_Loop_Finish_ConnError_KvsReInit=========================Memory stats (KB) " << compute_stats() ) ;
     //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): stream was recreated for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
@@ -1775,7 +1832,7 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
     LOG_DEBUG("kvs_stream_play - Re-created network connection error status = " << ((connection_error == 0) ? "NO_ERROR" : "ERROR" ) );
     LOG_DEBUG("kvs_stream_play exit - reconnection");
     //return 2;
-    return 0;
+    return -1;
 
   } else { // no connection error in current clip upload
     LOG_INFO(" KVS : Data upload successful");

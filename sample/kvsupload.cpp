@@ -501,6 +501,7 @@ static void kinesis_video_init(CustomData *data, char *stream_name) {
 //kinesis stream init
 static void kinesis_video_stream_init(CustomData *data) {
 
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream init started memory stats %ld\n", __FILE__, __LINE__,compute_stats() );
   bool use_absolute_fragment_times = DEFAULT_ABSOLUTE_FRAGMENT_TIMES;
   if ( ! data->gkvsclip_livemode ) { 
     data->streaming_type = STREAMING_TYPE_OFFLINE;
@@ -553,6 +554,7 @@ static void kinesis_video_stream_init(CustomData *data) {
     //mkv_timecode,audio_queue_size,video_queue_size,audio_buffer_size,video_buffer_size
     data->putFrameHelper = make_unique<PutFrameHelper>(data->kinesis_video_stream,1000000,20,20,400,70000);
     data->stream_started.clear();
+    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream init audio video done memory stats %ld\n", __FILE__, __LINE__,compute_stats() );
   } else {
     LOG_INFO("Kinesis video stream init video case");
     data->kinesis_video_stream = data->kinesis_video_producer->createStreamSync(move(stream_definition));
@@ -560,6 +562,7 @@ static void kinesis_video_stream_init(CustomData *data) {
       std::lock_guard<std::mutex> lk(custom_data_mtx);
       data->stream_in_progress = false;
     }
+    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream init video only done memory stats %ld\n", __FILE__, __LINE__,compute_stats() );
   }
 
   // since we are starting new putMedia, timestamp need not be padded.
@@ -578,15 +581,15 @@ static void kinesis_video_stream_init(CustomData *data) {
 
 //kvs video stream uninit
 void kinesis_video_stream_uninit(CustomData *data, uint64_t& hangdetecttime) {
-  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream uninit started\n", __FILE__, __LINE__);
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream uninit started memory stats %ld\n", __FILE__, __LINE__, compute_stats() );
   if (data->kinesis_video_stream != NULL) {
     //LOG_INFO("kinesis_video_stream_uninit - Enter");
     if ( ( data->gkvsclip_audio ) && ( nullptr != data->putFrameHelper ) ) {
       // signal putFrameHelper to release all frames still in queue.
       hangdetecttime = chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush\n", __FILE__, __LINE__);
       if( !data->put_frame_flushed.load() ) 
       {
+        RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush after stream uninit\n", __FILE__, __LINE__);
         data->putFrameHelper->flush();
         data->put_frame_flushed = true;
       }
@@ -597,7 +600,7 @@ void kinesis_video_stream_uninit(CustomData *data, uint64_t& hangdetecttime) {
     data->kinesis_video_stream = NULL;
     //LOG_INFO("kinesis_video_stream_uninit - Exit");
   }
-  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream uninit done\n", __FILE__, __LINE__);
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs stream uninit done memory stats %ld\n", __FILE__, __LINE__,compute_stats() );
 }
 
 //recreate stream
@@ -1314,14 +1317,14 @@ static void eos_cb_av(GstElement *sink, CustomData *data) {
     // signal putFrameHelper to release all frames still in queue.
     if( !data->put_frame_flushed.load() ) 
     {
-      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush called in EOS\n", __FILE__, __LINE__);
+      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush called in EOS memory stats %ld \n", __FILE__, __LINE__, compute_stats() );
       data->putFrameHelper->flush();
       if (!data->putFrameHelper->putFrameFailed()) {
         LOG_ERROR("Putframe error detected.");
         data->put_frame_failed = true;
       }
       data->put_frame_flushed = true;
-      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush complete in EOS\n", __FILE__, __LINE__);
+      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush complete in EOS memory stats %ld\n", __FILE__, __LINE__, compute_stats() );
     }
     
     data->putFrameHelper->putEofr();
@@ -1676,7 +1679,7 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
       }
   }
 
-  //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline init done %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline init done %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
 
   //reset states
   data.first_frame = true;
@@ -1702,7 +1705,7 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
   }
   
   //LOG_DEBUG("GStreamer_start - After changing gstreamer pipeline to play state");
-  //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline state changed to playing %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Pipeline state changed to playing %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
 
 
   //null check for main loop
@@ -1753,7 +1756,7 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
   }
 
   //LOG_INFO("=======================gstreamer_start_Main_Loop_Finish_gst_Uninit=========================Memory stats (KB) " << compute_stats() );
-  //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): pipeline uninit complete for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+  RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): pipeline uninit complete for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
 
   if( data.streaming_type == STREAMING_TYPE_OFFLINE ) {
     RDK_LOG( RDK_LOG_DEBUG,"LOG.RDK.CVRUPLOAD","%s(%d): Awaiting for the upload status... \n", __FILE__, __LINE__);
@@ -1822,8 +1825,8 @@ int kvs_stream_play( char *clip, unsigned short& clip_audio, unsigned short& cli
     recreate_stream(&data,hangdetecttime);
   
     //LOG_INFO("=======================Main_Loop_Finish_ConnError_KvsReInit=========================Memory stats (KB) " << compute_stats() ) ;
-    //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): stream was recreated for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
-    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): stream was recreated for clip %s\n", __FILE__, __LINE__, data.clip_name);
+    RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): stream was recreated for clip %s memory stats %ld\n", __FILE__, __LINE__, data.clip_name, compute_stats() );
+    //RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): stream was recreated for clip %s\n", __FILE__, __LINE__, data.clip_name);
     {
       std::lock_guard<std::mutex> lk(custom_data_mtx);
       connection_error = data.connection_error;

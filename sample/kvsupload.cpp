@@ -42,7 +42,7 @@ LOGGER_TAG("com.amazonaws.kinesis.video.gstreamer");
 #define SESSION_TOKEN_ENV_VAR "AWS_SESSION_TOKEN"
 #define KVS_LOG_CONFIG_ENV_VER "KVS_LOG_CONFIG"
 #define KVSINITMAXRETRY 5
-#define CLIPUPLOAD_READY_TIMEOUT_DURATION_IN_SECONDS 25
+#define CLIPUPLOAD_READY_TIMEOUT_DURATION_IN_SECONDS 20
 #define CLIPUPLOAD_MAX_TIMEOUT_DURATION_IN_MILLISECOND 15000
 
 //Kinesis Video Stream definitions
@@ -328,11 +328,10 @@ SampleStreamCallbackProvider::streamErrorReportHandler(UINT64 custom_data, STREA
   
   std::stringstream status_strstrm;
   status_strstrm << "0x" << std::hex << status_code;
-  
-  LOG_ERROR("Reporting stream error. Errored timecode: " << errored_timecode << " Status: "
-                                                         << status_strstrm.str() );
-
   CustomData *customDataObj = reinterpret_cast<CustomData *>(custom_data);
+
+  LOG_ERROR("Reporting stream error. Errored timecode: " << errored_timecode << " Status: "
+                                                         << status_strstrm.str() << " clip name is" << customDataObj->clip_name );
   //customDataObj->stream_status = status_code;
 
   //if (status_code == static_cast<UINT32>(STATUS_DESCRIBE_STREAM_CALL_FAILED) &&
@@ -390,6 +389,12 @@ SampleStreamCallbackProvider::FragmentAckReceivedHandler(UINT64 custom_data,STRE
       std::lock_guard<std::mutex> lock( customDataObj->clip_upload_mutex_ );
       customDataObj->clip_upload_status_ = true;
       customDataObj->clip_upload_status_var_.notify_one();
+    }
+
+    //delete clip file
+    if ( strlen(customDataObj->clip_name) != 0 ) {
+      RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d): Deleting clip %s\n", __FILE__, __LINE__, customDataObj->clip_name);
+      unlink(customDataObj->clip_name);
     }
   }
   return STATUS_SUCCESS;
@@ -591,6 +596,7 @@ void kinesis_video_stream_uninit(CustomData *data, uint64_t& hangdetecttime) {
       {
         RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush after stream uninit\n", __FILE__, __LINE__);
         data->putFrameHelper->flush();
+        data->putFrameHelper->putEofr();
         data->put_frame_flushed = true;
       }
     }
@@ -765,7 +771,7 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
           g_main_loop_quit(data->main_loop);
         }
       }
-      return GST_FLOW_OK;
+      return GST_FLOW_ERROR;
     }
    }catch (runtime_error &err) {
       RDK_LOG( RDK_LOG_ERROR,"LOG.RDK.CVRUPLOAD","%s(%d): RunTime Error - Failed to put frame \n", __FILE__, __LINE__);
@@ -779,7 +785,7 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
           g_main_loop_quit(data->main_loop);
         }
       }
-      return GST_FLOW_OK;
+      return GST_FLOW_ERROR;
    }
  } else {
    gst_sample_unref(sample);
@@ -788,7 +794,7 @@ static GstFlowReturn on_new_sample(GstElement *sink, CustomData *data) {
 
 Cleanup:
  gst_sample_unref(sample);
- return GST_FLOW_OK;
+ return GST_FLOW_ERROR;
 }
 
 static GstFlowReturn on_no_sample(GstElement *sink, CustomData *data) {
@@ -1139,7 +1145,7 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
                     g_main_loop_quit(data->main_loop);
                   }
                 }
-                return GST_FLOW_OK;
+                return GST_FLOW_ERROR;
             }
         } else {
             data->audio_video_sync_cv.notify_all();
@@ -1190,7 +1196,6 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
           goto CleanUp;
         }*/
       }
-
 
       if (!delta && track_id == DEFAULT_VIDEO_TRACKID) {
         if (data->first_frame) {
@@ -1250,7 +1255,7 @@ static GstFlowReturn on_new_sample_av(GstElement *sink, CustomData *data) {
               g_main_loop_quit(data->main_loop);
             }
           }
-          return GST_FLOW_OK;
+          return GST_FLOW_ERROR;
       }
       data->pipeline_blocked = false;
     }
@@ -1289,9 +1294,9 @@ static void error_cb_av(GstBus *bus, GstMessage *msg, CustomData *data) {
     g_clear_error(&err);
     g_free(debug_info);
 
-#if 0
+#if 1
     if( data->mainloop_running ) {
-      LOG_DEBUG("error_cb_av : Main loop quit done" );
+      LOG_ERROR("error_cb_av : Main loop quit done" );
       data->mainloop_running = false;
       g_main_loop_quit(data->main_loop);
     }
@@ -1323,11 +1328,11 @@ static void eos_cb_av(GstElement *sink, CustomData *data) {
         LOG_ERROR("Putframe error detected.");
         data->put_frame_failed = true;
       }
+      data->putFrameHelper->putEofr();
+
       data->put_frame_flushed = true;
       RDK_LOG( RDK_LOG_INFO,"LOG.RDK.CVRUPLOAD","%s(%d) : kvs put frame flush complete in EOS memory stats %ld\n", __FILE__, __LINE__, compute_stats() );
     }
-    
-    data->putFrameHelper->putEofr();
 
 #if 0
     //sending EoFr
@@ -1340,7 +1345,6 @@ static void eos_cb_av(GstElement *sink, CustomData *data) {
       //data->first_frame = true;
     }
 #endif
-
     LOG_DEBUG("Terminating pipeline due to EOS");
     if( data->mainloop_running ) {
       data->mainloop_running = false;

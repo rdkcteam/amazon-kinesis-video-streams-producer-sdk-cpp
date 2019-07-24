@@ -519,6 +519,8 @@ public:
      *  @return a function pointer conforming to the description above.
      */
     virtual DeviceCertToTokenFunc getDeviceCertToTokenCallback();
+
+    virtual ~CallbackProvider() {}
 };
 
 } // namespace video

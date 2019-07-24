@@ -33,6 +33,8 @@ public:
     virtual const std::string getCustomUserAgent() {
         return "";
     }
+
+    virtual ~DeviceInfoProvider() {}
 };
 
 } // namespace video
